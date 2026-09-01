@@ -62,6 +62,7 @@ import { syncFeeScheduleToSheet, fetchFeeScheduleFromSheet, detectProvider, test
 import { DuplicateCleanerView } from './DuplicateCleanerView';
 import { AuditLogsView } from './AuditLogsView';
 import { SchoolBrandingCustomizer } from './SchoolBrandingCustomizer';
+import { UserCredentialManager } from './UserCredentialManager';
 import { PWAInstallButton } from './PWAInstallButton';
 import { findDuplicateGroups } from '../services/deduplicationService';
 import {
@@ -89,6 +90,7 @@ import {
 } from '../services/firebase';
 
 export type AppToolId =
+  | 'user_credentials'
   | 'school_branding'
   | 'fee_update'
   | 'school_profiles'
@@ -122,6 +124,7 @@ interface SettingsModalProps {
   onOpenRollover?: () => void;
   onOpenDuplicateCleaner?: () => void;
   onOpenMigrator?: () => void;
+  onLogout?: () => void;
   onMergeDuplicateGroup?: (primaryId: string, mergedRecord: StudentPaymentRecord, deletedIds: string[]) => Promise<void> | void;
   onDeleteStudent?: (id: string, student: StudentPaymentRecord) => Promise<void> | void;
   onBatchResolveDuplicates?: (mergedRecords: StudentPaymentRecord[], deletedIds: string[]) => Promise<void> | void;
@@ -146,6 +149,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onOpenRollover,
   onOpenDuplicateCleaner,
   onOpenMigrator,
+  onLogout,
   onMergeDuplicateGroup,
   onDeleteStudent,
   onBatchResolveDuplicates,
@@ -1282,6 +1286,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // List of all Apps in the Gallery
   const primaryApps = [
     {
+      id: 'user_credentials' as AppToolId,
+      title: '👑 User Credentials & RBAC Security',
+      category: 'Security & Access Control',
+      description: 'Manage Admin & Bursar usernames, passwords, access privileges & cloud sync',
+      icon: ShieldCheck,
+      color: 'bg-purple-700 text-white',
+      badge: session.role === 'admin' ? 'Admin Full Access' : 'Bursar View Only',
+      badgeColor: session.role === 'admin' ? 'bg-purple-100 text-purple-800 font-bold' : 'bg-slate-100 text-slate-700',
+    },
+    {
       id: 'school_branding' as AppToolId,
       title: '🎨 School Branding & Customizer',
       category: 'School Customization',
@@ -1472,7 +1486,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
             <div className="min-w-0">
               <h3 className="text-sm sm:text-base font-black text-[#1a1a1a] uppercase tracking-tight truncate">
-                {activeAppId === 'school_branding'
+                {activeAppId === 'user_credentials'
+                  ? 'User Credentials & RBAC Security'
+                  : activeAppId === 'school_branding'
                   ? 'School Branding & White-Label Customizer'
                   : activeAppId === 'fee_update'
                   ? 'Fee Update & Class Fee Rates'
@@ -1677,6 +1693,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
             </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* VIEW: USER CREDENTIALS & RBAC SECURITY                                    */}
+          {/* ========================================================================= */}
+          {activeAppId === 'user_credentials' && (
+            <UserCredentialManager
+              session={session}
+              onSessionUpdated={(updatedSession) => {
+                onSaveSession(updatedSession);
+              }}
+            />
           )}
 
           {/* ========================================================================= */}
@@ -2894,6 +2922,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {saveSuccess ? <Check className="w-4 h-4 text-white" /> : <span>Save Profile</span>}
                 </button>
               </div>
+
+              {onLogout && (
+                <div className="pt-4 border-t border-slate-200">
+                  <div className="bg-rose-50 border border-rose-200 p-4 rounded-2xl flex items-center justify-between">
+                    <div>
+                      <h5 className="text-xs font-bold text-rose-950">Active Session Access</h5>
+                      <p className="text-[11px] text-rose-700">Lock portal and return to system login screen</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onLogout();
+                      }}
+                      className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                    >
+                      Sign Out & Lock
+                    </button>
+                  </div>
+                </div>
+              )}
             </form>
           )}
 

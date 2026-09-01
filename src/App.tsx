@@ -155,6 +155,7 @@ export default function App() {
         const parsed = JSON.parse(stored);
         return {
           ...parsed,
+          isAuthenticated: Boolean(parsed.isAuthenticated),
           schoolName: activeSchool?.name || parsed.schoolName || 'Eminent Royal Crown Academy',
           currencySymbol: activeSchool?.currencySymbol || parsed.currencySymbol || '₦',
           schoolId: activeSchool?.id || 'eminent-academy',
@@ -164,8 +165,9 @@ export default function App() {
       console.error(e);
     }
     return {
-      isAuthenticated: true,
+      isAuthenticated: false,
       bursarName: 'Bursar',
+      role: 'bursar',
       schoolName: activeSchool?.name || 'Eminent Royal Crown Academy',
       currencySymbol: activeSchool?.currencySymbol || '₦',
       schoolId: activeSchool?.id || 'eminent-academy',
@@ -631,13 +633,34 @@ export default function App() {
     }
   };
 
-  const handleLogin = (bursarName: string) => {
+  const handleLogin = (sessionUpdates: { bursarName: string; username?: string; role?: 'admin' | 'bursar'; userTitle?: string } | string) => {
+    if (typeof sessionUpdates === 'string') {
+      const updated: BursarSession = {
+        ...session,
+        isAuthenticated: true,
+        bursarName: sessionUpdates,
+      };
+      handleSaveSession(updated);
+    } else {
+      const updated: BursarSession = {
+        ...session,
+        isAuthenticated: true,
+        bursarName: sessionUpdates.bursarName,
+        username: sessionUpdates.username || session.username,
+        role: sessionUpdates.role || session.role || 'bursar',
+        userTitle: sessionUpdates.userTitle || session.userTitle,
+      };
+      handleSaveSession(updated);
+    }
+  };
+
+  const handleLogout = () => {
     const updated: BursarSession = {
       ...session,
-      isAuthenticated: true,
-      bursarName,
+      isAuthenticated: false,
     };
     handleSaveSession(updated);
+    showToast('Logged out securely.');
   };
 
   // Handle adding new student (Write)
@@ -1166,6 +1189,7 @@ export default function App() {
           onOpenAddStudent={() => setIsAddStudentOpen(true)}
           onOpenSheetUpload={() => setIsSheetUploadOpen(true)}
           onOpenMigrator={() => setIsMigratorOpen(true)}
+          onLogout={handleLogout}
           studentCount={students.length}
           activeSchool={activeSchool}
           syncStatus={syncStatus}
@@ -1327,6 +1351,7 @@ export default function App() {
           onOpenRollover={() => setIsRolloverModalOpen(true)}
           onOpenDuplicateCleaner={() => setIsDuplicateCleanerOpen(true)}
           onOpenMigrator={() => setIsMigratorOpen(true)}
+          onLogout={handleLogout}
         />
 
         {/* Duplicate Cleaner Modal */}

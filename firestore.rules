@@ -72,6 +72,11 @@ service cloud.firestore {
         allow read, write: if isSafeId(backupId);
       }
 
+      // 10. System Users and Staff Role Accounts
+      match /system_users/{userId} {
+        allow read, write: if isSafeId(userId);
+      }
+
       // Catch-all for any other nested subcollections under a school
       match /{allChildren=**} {
         allow read, write: if true;

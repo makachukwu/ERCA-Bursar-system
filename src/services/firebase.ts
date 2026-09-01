@@ -266,7 +266,7 @@ export async function testConnection(): Promise<{ success: boolean; latencyMs: n
 /**
  * Helper to clean undefined values before saving to Firestore
  */
-function sanitizeForFirestore<T extends Record<string, any>>(obj: T): T {
+export function sanitizeForFirestore<T extends Record<string, any>>(obj: T): T {
   const clean: any = {};
   for (const [key, value] of Object.entries(obj)) {
     if (value === undefined) {

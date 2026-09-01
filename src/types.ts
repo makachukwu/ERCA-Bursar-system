@@ -7,6 +7,8 @@ export type PaymentStatus = 'unpaid' | 'part_payment' | 'fully_paid';
 
 export type TabType = 'students' | 'record_payment' | 'admission' | 'payroll' | 'analytics' | 'collection';
 
+export type RemittanceApprovalStatus = 'pending' | 'approved' | 'rejected';
+
 export interface RemittanceRecord {
   id: string;
   amount: number;
@@ -19,6 +21,15 @@ export interface RemittanceRecord {
   session?: string;
   notes?: string;
   paymentMethod?: 'bank_deposit' | 'bank_transfer' | 'cash_handover' | 'pos_settlement' | 'other';
+  status?: RemittanceApprovalStatus;
+  approvalStatus?: RemittanceApprovalStatus;
+  approvedBy?: string;
+  approvedAt?: string;
+  rejectedBy?: string;
+  rejectedAt?: string;
+  rejectionReason?: string;
+  submittedBy?: string;
+  submittedByRole?: 'bursar' | 'admin';
 }
 
 export interface ScholarshipRecord {
@@ -169,13 +180,16 @@ export interface SchoolProfile {
 export interface BursarSession {
   isAuthenticated: boolean;
   bursarName: string;
+  username?: string;
+  role?: 'admin' | 'bursar' | string;
+  userTitle?: string;
   email?: string;
-  role?: string;
   schoolName: string;
   currencySymbol: string;
   activeSchoolId?: string;
   schoolId?: string;
   passcode?: string;
+  lastLoginAt?: string;
 }
 
 export interface PaymentReceipt {

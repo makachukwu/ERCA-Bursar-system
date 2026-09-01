@@ -14,7 +14,10 @@ import {
   Zap,
   Cloud,
   FileSpreadsheet,
-  Database
+  Database,
+  LogOut,
+  Shield,
+  User
 } from 'lucide-react';
 import { BursarSession, SchoolProfile } from '../types';
 import { DGOSLogo } from './DGOSLogo';
@@ -31,6 +34,7 @@ interface HeaderProps {
   onOpenAddStudent: () => void;
   onOpenSheetUpload?: () => void;
   onOpenMigrator?: () => void;
+  onLogout?: () => void;
   studentCount: number;
   activeSchool?: SchoolProfile;
   syncStatus?: SyncStatus;
@@ -45,6 +49,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAddStudent,
   onOpenSheetUpload,
   onOpenMigrator,
+  onLogout,
   studentCount,
   syncStatus,
 }) => {
@@ -54,6 +59,8 @@ export const Header: React.FC<HeaderProps> = ({
     const unsub = subscribeBranding((updated) => setBranding(updated));
     return unsub;
   }, []);
+
+  const isAdmin = session.role === 'admin';
 
   return (
     <header className="shrink-0 bg-white border-b border-[#f0f0f0] px-4 sm:px-5 py-3.5 z-30">
@@ -79,6 +86,16 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Status Indicators */}
           <div className="flex items-center gap-2 text-[11px] text-[#a0a0a0] mt-1 font-medium flex-wrap">
+            {/* User Role Badge */}
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-black text-[10px] uppercase tracking-wider ${
+              isAdmin ? 'bg-purple-100 text-purple-900 border border-purple-200' : 'bg-blue-100 text-blue-900 border border-blue-200'
+            }`}>
+              {isAdmin ? <Shield className="w-3 h-3 text-purple-700" /> : <User className="w-3 h-3 text-blue-700" />}
+              <span>{isAdmin ? 'Admin' : 'Bursar'}: {session.bursarName}</span>
+            </span>
+
+            <span>•</span>
+
             <span className="flex items-center gap-1">
               {isOnline ? (
                 <span className="inline-flex items-center gap-1 text-[#10b981] font-bold">
@@ -186,6 +203,18 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Settings className="w-4 h-4" />
           </button>
+
+          {/* Logout / Lock System */}
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              id="header-lock-logout-btn"
+              title="Lock System / Log Out"
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-rose-50 text-rose-700 flex items-center justify-center hover:bg-rose-100 active:scale-95 transition-all border border-rose-200 cursor-pointer"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
     </header>

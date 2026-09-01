@@ -39,6 +39,8 @@ import {
   addRemittance, 
   deleteRemittance, 
   updateRemittance,
+  approveRemittance,
+  rejectRemittance,
   clearAllRemittances,
   calculateCollectionMetrics
 } from '../services/remittanceService';
@@ -73,6 +75,13 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
   const [remittanceToEdit, setRemittanceToEdit] = useState<RemittanceRecord | null>(null);
   const [isEditing, setIsEditing] = useState(false);
 
+  // Approval & RBAC State
+  const isAdmin = session.role === 'admin';
+  const [remittanceFilter, setRemittanceFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [remittanceToReject, setRemittanceToReject] = useState<RemittanceRecord | null>(null);
+  const [rejectionReasonInput, setRejectionReasonInput] = useState('');
+  const [isApprovingId, setIsApprovingId] = useState<string | null>(null);
+
   // Remittance form state
   const [amountInput, setAmountInput] = useState('');
   const [dateInput, setDateInput] = useState(getTodayDateString());
@@ -96,6 +105,23 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
   const metrics = useMemo(() => {
     return calculateCollectionMetrics(students, remittances);
   }, [students, remittances]);
+
+  const pendingRemittances = useMemo(() => {
+    return remittances.filter((r) => r.status === 'pending' || r.approvalStatus === 'pending');
+  }, [remittances]);
+
+  const filteredRemittances = useMemo(() => {
+    return remittances.filter((r) => {
+      const isApproved = r.status === 'approved' || r.approvalStatus === 'approved' || (!r.status && !r.approvalStatus);
+      const isPending = r.status === 'pending' || r.approvalStatus === 'pending';
+      const isRejected = r.status === 'rejected' || r.approvalStatus === 'rejected';
+
+      if (remittanceFilter === 'pending') return isPending;
+      if (remittanceFilter === 'approved') return isApproved;
+      if (remittanceFilter === 'rejected') return isRejected;
+      return true;
+    });
+  }, [remittances, remittanceFilter]);
 
   const currentTerm = students[0]?.term || 'Current Term';
   const currentSession = students[0]?.session || '2025-2026';
@@ -152,16 +178,25 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
 
     setIsSubmitting(true);
     try {
+      const userRole = session.role || (isAdmin ? 'admin' : 'bursar');
+      const isAutoApproved = userRole === 'admin';
+
       const { allRecords } = addRemittance(
         {
           amount: numAmount,
           date: dateInput || getTodayDateString(),
           remittedTo: finalRecipient,
-          bursarName: session.bursarName || 'Bursar',
+          bursarName: session.bursarName || (isAutoApproved ? 'Administrator' : 'Bursar'),
           term: currentTerm,
           session: currentSession,
           notes: referenceNotes.trim() || undefined,
           paymentMethod,
+          submittedBy: session.bursarName || (isAutoApproved ? 'Administrator' : 'Bursar'),
+          submittedByRole: (userRole === 'admin' || userRole === 'bursar' ? userRole : 'bursar') as 'admin' | 'bursar',
+          status: isAutoApproved ? 'approved' : 'pending',
+          approvalStatus: isAutoApproved ? 'approved' : 'pending',
+          approvedBy: isAutoApproved ? (session.bursarName || 'Administrator') : undefined,
+          approvedAt: isAutoApproved ? new Date().toISOString() : undefined,
         },
         remittances,
         session.schoolId || 'eminent-academy'
@@ -170,35 +205,153 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
       setRemittances(allRecords);
       setIsRecordModalOpen(false);
 
-      const newTotalRemitted = allRecords.reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+      // Only approved remittances update total_remitted in official student books
+      const newTotalApprovedRemitted = allRecords
+        .filter((r) => r.status === 'approved' || r.approvalStatus === 'approved' || (!r.status && !r.approvalStatus))
+        .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
 
       // Update in-memory student roster
       if (onUpdateStudents && students.length > 0) {
         const updated = students.map((s) => ({
           ...s,
-          total_remitted: newTotalRemitted,
+          total_remitted: newTotalApprovedRemitted,
         }));
         onUpdateStudents(updated);
       }
 
       const refCode = referenceNotes.trim() || `RMT-${Date.now().toString().slice(-6)}`;
 
+      if (isAutoApproved) {
+        recordAuditLog(
+          'REMITTANCE',
+          'RECORD_REMITTANCE',
+          `Admin [${session.bursarName}] recorded and auto-approved remittance of ${formatCurrency(numAmount, session.currencySymbol)} handed over to "${finalRecipient}" [Ref: ${refCode}]`,
+          { amount: numAmount, remittedTo: finalRecipient, ref: refCode, paymentMethod, status: 'approved' },
+          session.bursarName,
+          session.schoolId,
+          'SUCCESS'
+        );
+        setSuccessToast(`✓ Remittance of ${formatCurrency(numAmount, session.currencySymbol)} recorded & approved into the official ledger!`);
+      } else {
+        recordAuditLog(
+          'REMITTANCE',
+          'SUBMIT_REMITTANCE',
+          `Bursar [${session.bursarName}] submitted remittance of ${formatCurrency(numAmount, session.currencySymbol)} to "${finalRecipient}" [Ref: ${refCode}] for Admin Approval`,
+          { amount: numAmount, remittedTo: finalRecipient, ref: refCode, paymentMethod, status: 'pending' },
+          session.bursarName,
+          session.schoolId,
+          'INFO'
+        );
+        setSuccessToast(`📋 Remittance of ${formatCurrency(numAmount, session.currencySymbol)} submitted for Admin Approval. It will enter the official books once approved.`);
+      }
+
+      setTimeout(() => setSuccessToast(null), 5000);
+    } catch (err: any) {
+      setFormError(err.message || 'Failed to record remittance.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleApproveRemittanceItem = async (remittance: RemittanceRecord) => {
+    if (!isAdmin) {
+      setErrorToast('Permission Denied: Only School Administrator / Proprietor can approve remittances into the official book.');
+      setTimeout(() => setErrorToast(null), 4000);
+      return;
+    }
+
+    setIsApprovingId(remittance.id);
+    try {
+      const { allRecords } = approveRemittance(
+        remittance.id,
+        session.bursarName || 'Administrator',
+        remittances,
+        session.schoolId || 'eminent-academy'
+      );
+
+      setRemittances(allRecords);
+
+      const newTotalApprovedRemitted = allRecords
+        .filter((r) => r.status === 'approved' || r.approvalStatus === 'approved' || (!r.status && !r.approvalStatus))
+        .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+
+      if (onUpdateStudents && students.length > 0) {
+        const updated = students.map((s) => ({
+          ...s,
+          total_remitted: newTotalApprovedRemitted,
+        }));
+        onUpdateStudents(updated);
+      }
+
       recordAuditLog(
         'REMITTANCE',
-        'RECORD_REMITTANCE',
-        `Recorded remittance of ${formatCurrency(numAmount, session.currencySymbol)} handed over to "${finalRecipient}" [Ref: ${refCode}]`,
-        { amount: numAmount, remittedTo: finalRecipient, ref: refCode, paymentMethod },
+        'APPROVE_REMITTANCE',
+        `Admin [${session.bursarName}] APPROVED remittance of ${formatCurrency(remittance.amount, session.currencySymbol)} [Ref: ${remittance.referenceNumber}] to "${remittance.remittedTo}" — Posted to Official Ledger`,
+        { id: remittance.id, amount: remittance.amount, ref: remittance.referenceNumber, approvedBy: session.bursarName },
         session.bursarName,
         session.schoolId,
         'SUCCESS'
       );
 
-      setSuccessToast(`Remittance of ${formatCurrency(numAmount, session.currencySymbol)} recorded successfully!`);
+      setSuccessToast(`✓ Approved remittance ${remittance.referenceNumber} (${formatCurrency(remittance.amount, session.currencySymbol)})! Official books updated.`);
+      setTimeout(() => setSuccessToast(null), 4500);
+    } catch (err: any) {
+      setErrorToast(err.message || 'Failed to approve remittance.');
+      setTimeout(() => setErrorToast(null), 4000);
+    } finally {
+      setIsApprovingId(null);
+    }
+  };
+
+  const handleConfirmReject = async () => {
+    if (!remittanceToReject) return;
+    if (!isAdmin) {
+      setErrorToast('Permission Denied: Only School Administrator can reject remittances.');
+      setTimeout(() => setErrorToast(null), 4000);
+      return;
+    }
+
+    const reason = rejectionReasonInput.trim() || 'Rejected by Administrator during book reconciliation';
+    try {
+      const { allRecords } = rejectRemittance(
+        remittanceToReject.id,
+        session.bursarName || 'Administrator',
+        reason,
+        remittances,
+        session.schoolId || 'eminent-academy'
+      );
+
+      setRemittances(allRecords);
+
+      const newTotalApprovedRemitted = allRecords
+        .filter((r) => r.status === 'approved' || r.approvalStatus === 'approved' || (!r.status && !r.approvalStatus))
+        .reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+
+      if (onUpdateStudents && students.length > 0) {
+        const updated = students.map((s) => ({
+          ...s,
+          total_remitted: newTotalApprovedRemitted,
+        }));
+        onUpdateStudents(updated);
+      }
+
+      recordAuditLog(
+        'REMITTANCE',
+        'REJECT_REMITTANCE',
+        `Admin [${session.bursarName}] REJECTED remittance submission [Ref: ${remittanceToReject.referenceNumber}] for ${formatCurrency(remittanceToReject.amount, session.currencySymbol)}. Reason: ${reason}`,
+        { id: remittanceToReject.id, amount: remittanceToReject.amount, ref: remittanceToReject.referenceNumber, reason },
+        session.bursarName,
+        session.schoolId,
+        'WARNING'
+      );
+
+      setSuccessToast(`Remittance [${remittanceToReject.referenceNumber}] returned with review note.`);
+      setRemittanceToReject(null);
+      setRejectionReasonInput('');
       setTimeout(() => setSuccessToast(null), 4000);
     } catch (err: any) {
-      setFormError(err.message || 'Failed to record remittance.');
-    } finally {
-      setIsSubmitting(false);
+      setErrorToast(err.message || 'Failed to reject remittance.');
+      setTimeout(() => setErrorToast(null), 4000);
     }
   };
 
@@ -631,6 +784,120 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
         </div>
       </div>
 
+      {/* PENDING APPROVAL CALLOUT BANNER FOR ADMIN / BURSAR */}
+      {pendingRemittances.length > 0 && (
+        <div className={`p-4 sm:p-5 rounded-3xl border shadow-xs space-y-3.5 ${
+          isAdmin 
+            ? 'bg-gradient-to-r from-amber-500/10 via-amber-50/80 to-orange-50/70 border-amber-300' 
+            : 'bg-gradient-to-r from-blue-500/10 via-blue-50 to-indigo-50/70 border-blue-200'
+        }`}>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-xs text-white ${
+                isAdmin ? 'bg-amber-600' : 'bg-blue-600'
+              }`}>
+                {isAdmin ? <AlertCircle className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-black text-slate-900">
+                    {isAdmin ? `⚡ Remittance Approvals Required (${pendingRemittances.length})` : `⏳ Remittance(s) Awaiting Admin Approval (${pendingRemittances.length})`}
+                  </h3>
+                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${
+                    isAdmin ? 'bg-amber-200 text-amber-900' : 'bg-blue-200 text-blue-900'
+                  }`}>
+                    {isAdmin ? 'Proprietor Action' : 'Pending Verification'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 font-medium mt-0.5">
+                  {isAdmin
+                    ? `Bursar submitted ${pendingRemittances.length} remittance(s) totaling ${formatCurrency(metrics.pendingRemitted, session.currencySymbol)}. Approve below to post them into the official cash-in-hand reconciliation.`
+                    : `You submitted ${pendingRemittances.length} remittance(s) totaling ${formatCurrency(metrics.pendingRemitted, session.currencySymbol)}. Funds remain in custody until the School Administrator reviews and approves them.`}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Pending items list */}
+          <div className="grid grid-cols-1 gap-2.5 pt-1">
+            {pendingRemittances.map((remittance) => (
+              <div
+                key={remittance.id}
+                className="p-3.5 bg-white rounded-2xl border border-slate-200/90 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-amber-300 transition-all"
+              >
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center shrink-0 font-bold text-xs mt-0.5">
+                    ⏳
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-black text-slate-900 truncate">
+                        {remittance.remittedTo}
+                      </span>
+                      <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded font-semibold">
+                        {remittance.referenceNumber}
+                      </span>
+                      <span className="text-[10px] bg-amber-100 text-amber-900 font-black px-2 py-0.2 rounded-full">
+                        Pending Admin Approval
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-1 flex-wrap font-medium">
+                      <span>Submitted by: <strong className="text-slate-800">{remittance.submittedBy || remittance.bursarName || 'Bursar'}</strong></span>
+                      <span>•</span>
+                      <span>{formatDate(remittance.date)}</span>
+                      <span>•</span>
+                      <span className="capitalize">{remittance.paymentMethod?.replace('_', ' ')}</span>
+                      {remittance.notes && (
+                        <>
+                          <span>•</span>
+                          <span className="italic truncate max-w-[200px]">"{remittance.notes}"</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                  <div className="text-left sm:text-right">
+                    <span className="text-[9px] text-slate-400 font-bold uppercase block">Pending Amount</span>
+                    <span className="text-sm font-black text-amber-900 font-mono">
+                      {formatCurrency(remittance.amount, session.currencySymbol)}
+                    </span>
+                  </div>
+
+                  {isAdmin && (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleApproveRemittanceItem(remittance)}
+                        disabled={isApprovingId === remittance.id}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>{isApprovingId === remittance.id ? 'Approving...' : 'Approve & Book'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRemittanceToReject(remittance);
+                          setRejectionReasonInput('');
+                        }}
+                        className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        <span>Reject</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* SUB-TABS: Remittance History vs. Student Fee Collections Stream vs. Reconciliation */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="border-b border-slate-200 px-4 pt-3 flex items-center justify-between flex-wrap gap-2">
@@ -701,6 +968,70 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
         {/* Tab 1 Content: Remittance History */}
         {activeSubTab === 'remittances' && (
           <div className="divide-y divide-slate-100">
+            {/* Filter Bar for Remittance Approvals */}
+            {remittances.length > 0 && (
+              <div className="p-3 bg-slate-50/70 border-b border-slate-100 flex items-center gap-1.5 flex-wrap">
+                <span className="text-[11px] text-slate-500 font-bold mr-1">Status Filter:</span>
+                
+                <button
+                  type="button"
+                  onClick={() => setRemittanceFilter('all')}
+                  className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    remittanceFilter === 'all'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                >
+                  All ({remittances.length})
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRemittanceFilter('pending')}
+                  className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                    remittanceFilter === 'pending'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'bg-white text-amber-800 hover:bg-amber-50 border border-amber-200'
+                  }`}
+                >
+                  <span>⏳ Pending Approval</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-900 font-black">
+                    {pendingRemittances.length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRemittanceFilter('approved')}
+                  className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                    remittanceFilter === 'approved'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-white text-emerald-800 hover:bg-emerald-50 border border-emerald-200'
+                  }`}
+                >
+                  <span>✅ Approved & In Books</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-900 font-black">
+                    {remittances.filter((r) => r.status === 'approved' || r.approvalStatus === 'approved' || (!r.status && !r.approvalStatus)).length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRemittanceFilter('rejected')}
+                  className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                    remittanceFilter === 'rejected'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'bg-white text-rose-800 hover:bg-rose-50 border border-rose-200'
+                  }`}
+                >
+                  <span>❌ Rejected</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-rose-100 text-rose-900 font-black">
+                    {remittances.filter((r) => r.status === 'rejected' || r.approvalStatus === 'rejected').length}
+                  </span>
+                </button>
+              </div>
+            )}
+
             {remittances.length === 0 ? (
               <div className="p-8 text-center space-y-3">
                 <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto">
@@ -718,71 +1049,166 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
                   <span>Record First Remittance</span>
                 </button>
               </div>
-            ) : (
-              remittances.map((remittance) => (
-                <div
-                  key={remittance.id}
-                  className="p-3.5 hover:bg-slate-50 transition-colors flex items-center justify-between gap-3"
+            ) : filteredRemittances.length === 0 ? (
+              <div className="p-8 text-center space-y-2">
+                <p className="text-xs text-slate-500 font-medium">No remittance records matching "{remittanceFilter}" filter.</p>
+                <button
+                  type="button"
+                  onClick={() => setRemittanceFilter('all')}
+                  className="text-xs text-blue-600 font-bold hover:underline"
                 >
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
-                      <Landmark className="w-4 h-4" />
-                    </div>
+                  Show All Records
+                </button>
+              </div>
+            ) : (
+              filteredRemittances.map((remittance) => {
+                const isPending = remittance.status === 'pending' || remittance.approvalStatus === 'pending';
+                const isApproved = remittance.status === 'approved' || remittance.approvalStatus === 'approved' || (!remittance.status && !remittance.approvalStatus);
+                const isRejected = remittance.status === 'rejected' || remittance.approvalStatus === 'rejected';
 
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-bold text-slate-900 truncate">
-                          {remittance.remittedTo}
-                        </span>
-                        <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
-                          {remittance.referenceNumber}
-                        </span>
+                return (
+                  <div
+                    key={remittance.id}
+                    className={`p-3.5 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                      isPending ? 'bg-amber-50/40 hover:bg-amber-50/70' : isRejected ? 'bg-rose-50/30 hover:bg-rose-50/50' : 'hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
+                        isPending ? 'bg-amber-100 text-amber-800' : isRejected ? 'bg-rose-100 text-rose-700' : 'bg-blue-50 text-blue-600'
+                      }`}>
+                        <Landmark className="w-4 h-4" />
                       </div>
 
-                      <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-1 font-medium flex-wrap">
-                        <span>{formatDate(remittance.date)}</span>
-                        <span>•</span>
-                        <span className="capitalize">{remittance.paymentMethod?.replace('_', ' ') || 'Bank Deposit'}</span>
-                        {remittance.notes && (
-                          <>
-                            <span>•</span>
-                            <span className="italic truncate max-w-[180px]">"{remittance.notes}"</span>
-                          </>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-slate-900 truncate">
+                            {remittance.remittedTo}
+                          </span>
+                          <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                            {remittance.referenceNumber}
+                          </span>
+
+                          {/* Approval Status Badge */}
+                          {isPending && (
+                            <span className="text-[10px] bg-amber-100 text-amber-900 font-black px-2 py-0.2 rounded-full flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-amber-700" />
+                              <span>Pending Admin Approval</span>
+                            </span>
+                          )}
+
+                          {isApproved && (
+                            <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.2 rounded-full flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              <span>Approved & In Ledger</span>
+                            </span>
+                          )}
+
+                          {isRejected && (
+                            <span className="text-[10px] bg-rose-100 text-rose-800 font-bold px-2 py-0.2 rounded-full flex items-center gap-1">
+                              <X className="w-3 h-3 text-rose-600" />
+                              <span>Rejected / Returned</span>
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-1 font-medium flex-wrap">
+                          <span>{formatDate(remittance.date)}</span>
+                          <span>•</span>
+                          <span className="capitalize">{remittance.paymentMethod?.replace('_', ' ') || 'Bank Deposit'}</span>
+                          <span>•</span>
+                          <span>Recorded by: <strong className="text-slate-700">{remittance.submittedBy || remittance.bursarName || 'Bursar'}</strong></span>
+                          
+                          {isApproved && remittance.approvedBy && (
+                            <>
+                              <span>•</span>
+                              <span className="text-emerald-700 font-medium">
+                                Approved by {remittance.approvedBy}
+                              </span>
+                            </>
+                          )}
+
+                          {remittance.notes && (
+                            <>
+                              <span>•</span>
+                              <span className="italic truncate max-w-[180px]">"{remittance.notes}"</span>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Rejection reason note */}
+                        {isRejected && remittance.rejectionReason && (
+                          <div className="mt-1.5 text-[11px] text-rose-800 bg-rose-100/70 px-2.5 py-1 rounded-lg border border-rose-200/80 font-medium">
+                            <strong>Rejection Note:</strong> {remittance.rejectionReason}
+                          </div>
                         )}
                       </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    <div className="text-right">
-                      <div className="text-xs font-black text-blue-700 font-mono">
-                        {formatCurrency(remittance.amount, session.currencySymbol)}
+                    <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                      <div className="text-left sm:text-right">
+                        <div className={`text-xs font-black font-mono ${
+                          isPending ? 'text-amber-900' : isRejected ? 'text-rose-700 line-through' : 'text-blue-700'
+                        }`}>
+                          {formatCurrency(remittance.amount, session.currencySymbol)}
+                        </div>
+                        <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                          isPending ? 'bg-amber-100 text-amber-800' : isRejected ? 'bg-rose-100 text-rose-700' : 'bg-emerald-50 text-emerald-600'
+                        }`}>
+                          {isPending ? 'Pending Deposit' : isRejected ? 'Voided' : 'Booked'}
+                        </span>
                       </div>
-                      <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.2 rounded">
-                        Remitted
-                      </span>
-                    </div>
 
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => handleOpenEditModal(remittance)}
-                        title="Edit remittance record"
-                        className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        {/* Admin 1-Click Approve / Reject for Pending Items */}
+                        {isPending && isAdmin && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveRemittanceItem(remittance)}
+                              disabled={isApprovingId === remittance.id}
+                              title="Approve and post to official books"
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-2xs cursor-pointer disabled:opacity-50"
+                            >
+                              <CheckCircle2 className="w-3 h-3" />
+                              <span>{isApprovingId === remittance.id ? '...' : 'Approve'}</span>
+                            </button>
 
-                      <button
-                        onClick={() => setRemittanceToDelete(remittance)}
-                        title="Delete remittance record"
-                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRemittanceToReject(remittance);
+                                setRejectionReasonInput('');
+                              }}
+                              title="Reject remittance"
+                              className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer"
+                            >
+                              <X className="w-3 h-3" />
+                              <span>Reject</span>
+                            </button>
+                          </>
+                        )}
+
+                        <button
+                          onClick={() => handleOpenEditModal(remittance)}
+                          title="Edit remittance record"
+                          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
+                          onClick={() => setRemittanceToDelete(remittance)}
+                          title="Delete remittance record"
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         )}
@@ -995,6 +1421,27 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
             </div>
 
             <form onSubmit={handleSaveRemittance} className="p-5 space-y-4 overflow-y-auto">
+              {/* Role-based Workflow Info Badge */}
+              <div className={`p-3 rounded-2xl border text-xs flex items-start gap-2.5 ${
+                isAdmin 
+                  ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
+                  : 'bg-amber-50/80 border-amber-200 text-amber-900'
+              }`}>
+                <div className="mt-0.5">
+                  {isAdmin ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <Clock className="w-4 h-4 text-amber-600" />}
+                </div>
+                <div>
+                  <span className="font-bold block">
+                    {isAdmin ? 'Administrator Mode (Auto-Approved)' : 'Bursar Mode (Requires Admin Approval)'}
+                  </span>
+                  <p className="text-[11px] opacity-90 mt-0.5">
+                    {isAdmin 
+                      ? 'This remittance will be auto-approved and booked directly into the financial ledger.'
+                      : 'This remittance will be submitted to the School Administrator for review & approval before posting into the official cash balance.'}
+                  </p>
+                </div>
+              </div>
+
               {formError && (
                 <div className="p-3 bg-rose-50 border border-rose-200 text-rose-900 rounded-xl text-xs flex items-start gap-2">
                   <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
@@ -1453,6 +1900,85 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* REJECT REMITTANCE MODAL */}
+      {remittanceToReject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 border-b border-rose-100 flex items-center justify-between bg-rose-50/70">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-rose-600 text-white flex items-center justify-center shadow-xs">
+                  <X className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Reject Remittance Submission</h3>
+                  <p className="text-[11px] text-rose-700 font-medium">
+                    Return remittance back to Bursar with note
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRemittanceToReject(null)}
+                className="p-1.5 rounded-full hover:bg-slate-200 text-slate-500 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500 font-medium">Submitted Amount</span>
+                  <span className="text-base font-black text-rose-600 font-mono">
+                    {formatCurrency(remittanceToReject.amount, session.currencySymbol)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-medium">Destination</span>
+                  <span className="font-bold text-slate-800 truncate max-w-[200px]">
+                    {remittanceToReject.remittedTo}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-medium">Reference</span>
+                  <span className="font-mono text-slate-700">{remittanceToReject.referenceNumber}</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Reason for Rejection / Correction Note <span className="text-rose-600">*</span>
+                </label>
+                <textarea
+                  rows={3}
+                  value={rejectionReasonInput}
+                  onChange={(e) => setRejectionReasonInput(e.target.value)}
+                  placeholder="e.g. Bank teller slip is illegible, please re-upload or re-check amount..."
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-rose-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setRemittanceToReject(null)}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold hover:bg-slate-200 border border-slate-200 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmReject}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 active:scale-98 transition-all cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                  <span>Confirm Rejection</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
