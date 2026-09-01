@@ -1,0 +1,1461 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  Wallet, 
+  ArrowUpRight, 
+  ArrowDownLeft, 
+  Building, 
+  CheckCircle2, 
+  Plus, 
+  Trash2, 
+  Printer, 
+  Download, 
+  Calendar, 
+  FileText, 
+  Clock, 
+  AlertCircle, 
+  ShieldCheck, 
+  X, 
+  DollarSign, 
+  Layers, 
+  UserCheck, 
+  Landmark,
+  HandCoins,
+  History,
+  Receipt,
+  CloudCheck,
+  RefreshCw,
+  Edit2,
+  AlertTriangle,
+  RotateCcw
+} from 'lucide-react';
+import { StudentPaymentRecord, RemittanceRecord, BursarSession } from '../types';
+import { 
+  getSavedRemittances, 
+  addRemittance, 
+  deleteRemittance, 
+  updateRemittance,
+  clearAllRemittances,
+  calculateCollectionMetrics
+} from '../services/remittanceService';
+import { formatCurrency, formatDate, getTodayDateString } from '../services/calculations';
+import { recordAuditLog } from '../services/auditLoggerService';
+import { batchSaveStudentsToFirestore } from '../services/firebase';
+
+interface CollectionViewProps {
+  students: StudentPaymentRecord[];
+  session: BursarSession;
+  onUpdateStudents?: (students: StudentPaymentRecord[]) => void;
+  onSelectStudent?: (student: StudentPaymentRecord) => void;
+  onOpenRecordPayment?: () => void;
+}
+
+export const CollectionView: React.FC<CollectionViewProps> = ({
+  students,
+  session,
+  onUpdateStudents,
+  onSelectStudent,
+  onOpenRecordPayment,
+}) => {
+  const [remittances, setRemittances] = useState<RemittanceRecord[]>([]);
+  const [isRecordModalOpen, setIsRecordModalOpen] = useState(false);
+  const [activeSubTab, setActiveSubTab] = useState<'remittances' | 'collections' | 'reconciliation'>('remittances');
+  
+  // Deletion & Editing Modals State
+  const [remittanceToDelete, setRemittanceToDelete] = useState<RemittanceRecord | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isClearAllModalOpen, setIsClearAllModalOpen] = useState(false);
+  const [isClearingAll, setIsClearingAll] = useState(false);
+  const [remittanceToEdit, setRemittanceToEdit] = useState<RemittanceRecord | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+
+  // Remittance form state
+  const [amountInput, setAmountInput] = useState('');
+  const [dateInput, setDateInput] = useState(getTodayDateString());
+  const [remittedToInput, setRemittedToInput] = useState('First Bank (School Main Account)');
+  const [customRecipient, setCustomRecipient] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<'bank_deposit' | 'bank_transfer' | 'cash_handover' | 'pos_settlement' | 'other'>('bank_deposit');
+  const [referenceNotes, setReferenceNotes] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [successToast, setSuccessToast] = useState<string | null>(null);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
+
+  // Load remittances when active school changes
+  useEffect(() => {
+    const loaded = getSavedRemittances(session.schoolId || 'eminent-academy');
+    setRemittances(loaded);
+  }, [session.schoolId]);
+
+  const [visibleCollectionsCount, setVisibleCollectionsCount] = useState(30);
+
+  const metrics = useMemo(() => {
+    return calculateCollectionMetrics(students, remittances);
+  }, [students, remittances]);
+
+  const currentTerm = students[0]?.term || 'Current Term';
+  const currentSession = students[0]?.session || '2025-2026';
+
+  const handleOpenRemitModal = (prefillAmount?: number) => {
+    setAmountInput(prefillAmount !== undefined ? String(prefillAmount) : metrics.cashInHand > 0 ? String(metrics.cashInHand) : '');
+    setDateInput(getTodayDateString());
+    setRemittedToInput('First Bank (School Main Account)');
+    setCustomRecipient('');
+    setPaymentMethod('bank_deposit');
+    setReferenceNotes('');
+    setFormError(null);
+    setIsRecordModalOpen(true);
+  };
+
+  const handleOpenEditModal = (remittance: RemittanceRecord) => {
+    setRemittanceToEdit(remittance);
+    setAmountInput(String(remittance.amount));
+    setDateInput(remittance.date || getTodayDateString());
+    const standardRecipients = [
+      'First Bank (School Main Account)',
+      'Zenith Bank (School Ops Account)',
+      'GTBank (Tuition Account)',
+      'Principal / Proprietor Handover',
+      'School Management Committee',
+      'School Cash Vault / Safe',
+    ];
+    if (standardRecipients.includes(remittance.remittedTo)) {
+      setRemittedToInput(remittance.remittedTo);
+      setCustomRecipient('');
+    } else {
+      setRemittedToInput('Custom');
+      setCustomRecipient(remittance.remittedTo);
+    }
+    setPaymentMethod(remittance.paymentMethod || 'bank_deposit');
+    setReferenceNotes(remittance.notes || '');
+    setFormError(null);
+  };
+
+  const handleSaveRemittance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const numAmount = Number(amountInput);
+
+    if (isNaN(numAmount) || numAmount <= 0) {
+      setFormError('Please enter a valid remittance amount greater than 0.');
+      return;
+    }
+
+    const finalRecipient = remittedToInput === 'Custom' ? customRecipient.trim() : remittedToInput;
+    if (!finalRecipient) {
+      setFormError('Please select or specify where the funds were remitted/handed over.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const { allRecords } = addRemittance(
+        {
+          amount: numAmount,
+          date: dateInput || getTodayDateString(),
+          remittedTo: finalRecipient,
+          bursarName: session.bursarName || 'Bursar',
+          term: currentTerm,
+          session: currentSession,
+          notes: referenceNotes.trim() || undefined,
+          paymentMethod,
+        },
+        remittances,
+        session.schoolId || 'eminent-academy'
+      );
+
+      setRemittances(allRecords);
+      setIsRecordModalOpen(false);
+
+      const newTotalRemitted = allRecords.reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+
+      // Update in-memory student roster
+      if (onUpdateStudents && students.length > 0) {
+        const updated = students.map((s) => ({
+          ...s,
+          total_remitted: newTotalRemitted,
+        }));
+        onUpdateStudents(updated);
+      }
+
+      const refCode = referenceNotes.trim() || `RMT-${Date.now().toString().slice(-6)}`;
+
+      recordAuditLog(
+        'REMITTANCE',
+        'RECORD_REMITTANCE',
+        `Recorded remittance of ${formatCurrency(numAmount, session.currencySymbol)} handed over to "${finalRecipient}" [Ref: ${refCode}]`,
+        { amount: numAmount, remittedTo: finalRecipient, ref: refCode, paymentMethod },
+        session.bursarName,
+        session.schoolId,
+        'SUCCESS'
+      );
+
+      setSuccessToast(`Remittance of ${formatCurrency(numAmount, session.currencySymbol)} recorded successfully!`);
+      setTimeout(() => setSuccessToast(null), 4000);
+    } catch (err: any) {
+      setFormError(err.message || 'Failed to record remittance.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSaveEditRemittance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!remittanceToEdit) return;
+    const numAmount = Number(amountInput);
+
+    if (isNaN(numAmount) || numAmount <= 0) {
+      setFormError('Please enter a valid remittance amount greater than 0.');
+      return;
+    }
+
+    const finalRecipient = remittedToInput === 'Custom' ? customRecipient.trim() : remittedToInput;
+    if (!finalRecipient) {
+      setFormError('Please select or specify where the funds were remitted/handed over.');
+      return;
+    }
+
+    setIsEditing(true);
+    try {
+      const updated = updateRemittance(
+        remittanceToEdit.id,
+        {
+          amount: numAmount,
+          date: dateInput || getTodayDateString(),
+          remittedTo: finalRecipient,
+          notes: referenceNotes.trim() || undefined,
+          paymentMethod,
+        },
+        remittances,
+        session.schoolId || 'eminent-academy'
+      );
+
+      setRemittances(updated);
+      setRemittanceToEdit(null);
+
+      const newTotalRemitted = updated.reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+
+      if (onUpdateStudents && students.length > 0) {
+        const updatedStudents = students.map((s) => ({
+          ...s,
+          total_remitted: newTotalRemitted,
+        }));
+        onUpdateStudents(updatedStudents);
+      }
+
+      recordAuditLog(
+        'REMITTANCE',
+        'UPDATE_REMITTANCE',
+        `Updated remittance [${remittanceToEdit.referenceNumber}] to ${formatCurrency(numAmount, session.currencySymbol)} (Recipient: ${finalRecipient})`,
+        { id: remittanceToEdit.id, amount: numAmount, remittedTo: finalRecipient },
+        session.bursarName,
+        session.schoolId,
+        'INFO'
+      );
+
+      setSuccessToast(`Remittance updated to ${formatCurrency(numAmount, session.currencySymbol)}.`);
+      setTimeout(() => setSuccessToast(null), 3000);
+    } catch (err: any) {
+      setFormError(err.message || 'Failed to update remittance.');
+    } finally {
+      setIsEditing(false);
+    }
+  };
+
+  const confirmDeleteRemittance = async () => {
+    if (!remittanceToDelete) return;
+    setIsDeleting(true);
+    try {
+      const deletedAmount = remittanceToDelete.amount;
+      const updated = deleteRemittance(remittanceToDelete.id, remittances, session.schoolId || 'eminent-academy');
+      setRemittances(updated);
+      setRemittanceToDelete(null);
+
+      const newTotalRemitted = updated.reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
+
+      if (onUpdateStudents && students.length > 0) {
+        const updatedStudents = students.map((s) => ({
+          ...s,
+          total_remitted: newTotalRemitted,
+        }));
+        onUpdateStudents(updatedStudents);
+      }
+
+      recordAuditLog(
+        'REMITTANCE',
+        'DELETE_REMITTANCE',
+        `Deleted remittance of ${formatCurrency(deletedAmount, session.currencySymbol)} [Ref: ${remittanceToDelete.referenceNumber}]`,
+        { id: remittanceToDelete.id, amount: deletedAmount, ref: remittanceToDelete.referenceNumber },
+        session.bursarName,
+        session.schoolId,
+        'WARNING'
+      );
+
+      setSuccessToast(`Remittance record (${formatCurrency(deletedAmount, session.currencySymbol)}) deleted and balance updated.`);
+      setTimeout(() => setSuccessToast(null), 3000);
+    } catch (err: any) {
+      setFormError(err?.message || 'Failed to delete remittance');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const confirmClearAllRemittances = async () => {
+    setIsClearingAll(true);
+    try {
+      const updated = clearAllRemittances(session.schoolId || 'eminent-academy');
+      setRemittances(updated);
+      setIsClearAllModalOpen(false);
+
+      const newTotalRemitted = 0;
+
+      recordAuditLog(
+        'REMITTANCE',
+        'CLEAR_ALL_REMITTANCES',
+        `Cleared and reset all remittance transactions`,
+        {},
+        session.bursarName,
+        session.schoolId,
+        'CRITICAL'
+      );
+
+      if (onUpdateStudents && students.length > 0) {
+        const updatedStudents = students.map((s) => ({
+          ...s,
+          total_remitted: newTotalRemitted,
+        }));
+        onUpdateStudents(updatedStudents);
+      }
+
+      setSuccessToast('All remittance records cleared. Total remitted reset to 0.');
+      setTimeout(() => setSuccessToast(null), 3000);
+    } catch (err: any) {
+      setFormError(err?.message || 'Failed to clear remittances');
+    } finally {
+      setIsClearingAll(false);
+    }
+  };
+
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+
+  const handleSyncTotalToCloud = async () => {
+    setIsSyncingCloud(true);
+    try {
+      if (students.length > 0) {
+        const updated = students.map((s, idx) => idx === 0 ? { ...s, total_remitted: metrics.totalRemitted } : s);
+        if (onUpdateStudents) {
+          onUpdateStudents(updated);
+        }
+        await batchSaveStudentsToFirestore(updated, session.schoolId || 'eminent-academy');
+      }
+      setSuccessToast(`Synced ${formatCurrency(metrics.totalRemitted, session.currencySymbol)} across records and Firebase!`);
+      setTimeout(() => setSuccessToast(null), 3000);
+    } catch (e: any) {
+      setErrorToast('Failed to sync remittance: ' + (e?.message || 'Network error'));
+      setTimeout(() => setErrorToast(null), 4000);
+    } finally {
+      setIsSyncingCloud(false);
+    }
+  };
+
+  const handlePrintAudit = () => {
+    window.print();
+  };
+
+  const handleExportCsv = () => {
+    const headers = ['Reference', 'Date', 'Amount Remitted', 'Remitted To', 'Method', 'Bursar', 'Notes'];
+    const rows = remittances.map((r) => [
+      r.referenceNumber,
+      r.date,
+      r.amount,
+      `"${r.remittedTo.replace(/"/g, '""')}"`,
+      r.paymentMethod || '',
+      `"${(r.bursarName || '').replace(/"/g, '""')}"`,
+      `"${(r.notes || '').replace(/"/g, '""')}"`,
+    ]);
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `Bursar_Remittances_${getTodayDateString()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Student collections list (students with amount_paid > 0 or admission_paid > 0 or lesson_paid > 0 or exam_paid > 0)
+  const paidStudents = useMemo(() => {
+    return students
+      .filter((s) => {
+        const admissionFee = Number(s.admission_fee) || 0;
+        const admissionPaid = Number(s.admission_paid) || (admissionFee > 0 && s.is_new_admission ? admissionFee : 0);
+        return (
+          (Number(s.amount_paid) || 0) > 0 ||
+          admissionPaid > 0 ||
+          (Number(s.lesson_paid) || 0) > 0 ||
+          (Number(s.exam_paid) || 0) > 0
+        );
+      })
+      .sort((a, b) => (b.payment_date || '').localeCompare(a.payment_date || ''));
+  }, [students]);
+
+  return (
+    <div className="px-4 py-4 space-y-4 pb-28">
+      {/* Printable Audit Header (Hidden on screen, visible when printing) */}
+      <div className="hidden print:block p-4 border-b-2 border-black text-center space-y-1 mb-4">
+        <h1 className="text-xl font-black uppercase tracking-tight">{session.schoolName || 'Dominion College'}</h1>
+        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700">
+          Bursar Collection & Remittance Reconciliation Statement
+        </h2>
+        <p className="text-xs text-slate-600 font-mono">
+          Term: {currentTerm} | Session: {currentSession} | Generated: {formatDate(getTodayDateString())} | Bursar: {session.bursarName}
+        </p>
+      </div>
+
+      {/* Success Notification Banner */}
+      {successToast && (
+        <div className="p-3 bg-emerald-600 text-white rounded-2xl shadow-md text-xs font-bold flex items-center justify-between animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4" />
+            <span>{successToast}</span>
+          </div>
+          <button onClick={() => setSuccessToast(null)} className="p-1 hover:bg-emerald-700 rounded-lg cursor-pointer">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Error Notification Banner */}
+      {errorToast && (
+        <div className="p-3 bg-rose-600 text-white rounded-2xl shadow-md text-xs font-bold flex items-center justify-between animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" />
+            <span>{errorToast}</span>
+          </div>
+          <button onClick={() => setErrorToast(null)} className="p-1 hover:bg-rose-700 rounded-lg cursor-pointer">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Top Banner: Overview & Fast Actions */}
+      <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-xs">
+            <HandCoins className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">Bursar Collections & Remittances</h2>
+            <p className="text-[11px] text-slate-500 font-medium">
+              Accountability ledger for fee collections, bank deposits, and cash in hand
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => handleOpenRemitModal()}
+            id="record-remittance-top-btn"
+            className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all shadow-xs cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Record Remittance</span>
+          </button>
+
+          <button
+            onClick={handlePrintAudit}
+            id="print-remittance-statement-btn"
+            title="Print Remittance Statement"
+            className="p-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-200 text-xs font-bold flex items-center gap-1 active:scale-95 transition-all shadow-2xs cursor-pointer"
+          >
+            <Printer className="w-4 h-4 text-slate-600" />
+            <span className="hidden sm:inline">Print Voucher</span>
+          </button>
+        </div>
+      </div>
+
+      {/* PRIMARY 3 FINANCIAL METRICS CARDS */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {/* Card 1: How Much Bursar Has Collected */}
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+              Total Collected (Overall)
+            </span>
+            <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <ArrowDownLeft className="w-4 h-4" />
+            </div>
+          </div>
+
+          <div className="my-2">
+            <div className="text-2xl font-black tracking-tight text-slate-900 font-mono">
+              {formatCurrency(metrics.totalCollected, session.currencySymbol)}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 mt-2 text-[9px] font-bold">
+              <div className="bg-blue-50 text-blue-900 px-1.5 py-1 rounded-lg truncate">
+                <span className="text-blue-600 block text-[8px] uppercase">School Fee</span>
+                {formatCurrency(metrics.totalTuitionCollected, session.currencySymbol)}
+              </div>
+              <div className="bg-purple-50 text-purple-900 px-1.5 py-1 rounded-lg truncate">
+                <span className="text-purple-600 block text-[8px] uppercase">Admission</span>
+                {formatCurrency(metrics.totalAdmissionCollected, session.currencySymbol)}
+              </div>
+              <div className="bg-emerald-50 text-emerald-900 px-1.5 py-1 rounded-lg truncate">
+                <span className="text-emerald-600 block text-[8px] uppercase">Lesson Fee</span>
+                {formatCurrency(metrics.totalLessonCollected, session.currencySymbol)}
+              </div>
+              <div className="bg-amber-50 text-amber-900 px-1.5 py-1 rounded-lg truncate">
+                <span className="text-amber-600 block text-[8px] uppercase">Exam Fee</span>
+                {formatCurrency(metrics.totalExamCollected, session.currencySymbol)}
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-500 font-medium">
+            <span className="truncate">{metrics.collectionCount} student payments</span>
+            <span className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+              Received
+            </span>
+          </div>
+        </div>
+
+        {/* Card 2: How Much Bursar Has Remitted */}
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs relative overflow-hidden flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+              Total Remitted
+            </span>
+            <div className="flex items-center gap-1.5">
+              {metrics.totalRemitted > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIsClearAllModalOpen(true)}
+                  title="Reset or Clear All Remitted Amount"
+                  className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 transition-colors text-[10px] font-bold flex items-center gap-1 cursor-pointer border border-rose-200"
+                >
+                  <Trash2 className="w-3 h-3 text-rose-600" />
+                  <span>Reset</span>
+                </button>
+              )}
+              <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                <ArrowUpRight className="w-4 h-4" />
+              </div>
+            </div>
+          </div>
+
+          <div className="my-2">
+            <div className="text-2xl font-black tracking-tight text-blue-600 font-mono">
+              {formatCurrency(metrics.totalRemitted, session.currencySymbol)}
+            </div>
+            <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+              Deposited across <span className="font-bold text-slate-700">{metrics.remittanceCount}</span> remittances
+            </p>
+          </div>
+
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-500 font-medium">
+            <span className="truncate flex items-center gap-1 font-mono text-[9px] text-blue-800 bg-blue-50/80 px-2 py-0.5 rounded-md border border-blue-100/60">
+              <CheckCircle2 className="w-3 h-3 text-blue-600 shrink-0" />
+              Cloud: <strong className="font-bold">total_remitted</strong>
+            </span>
+            <button
+              onClick={handleSyncTotalToCloud}
+              disabled={isSyncingCloud}
+              title="Sync Total Remitted to Firestore"
+              className="font-bold text-blue-600 hover:text-blue-800 text-[10px] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3 h-3 ${isSyncingCloud ? 'animate-spin' : ''}`} />
+              <span>Sync</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Card 3: How Much Is With Her Currently (Cash at Hand) */}
+        <div className={`p-4 rounded-2xl border shadow-xs relative overflow-hidden flex flex-col justify-between ${
+          metrics.cashInHand > 0
+            ? 'bg-amber-50/60 border-amber-300'
+            : 'bg-white border-slate-200'
+        }`}>
+          <div className="flex items-center justify-between">
+            <span className={`text-[11px] font-bold uppercase tracking-wider ${
+              metrics.cashInHand > 0 ? 'text-amber-900' : 'text-slate-500'
+            }`}>
+              Cash With Bursar (Currently)
+            </span>
+            <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+              metrics.cashInHand > 0 ? 'bg-amber-200 text-amber-900' : 'bg-emerald-50 text-emerald-600'
+            }`}>
+              <Wallet className="w-4 h-4" />
+            </div>
+          </div>
+
+          <div className="my-2">
+            <div className={`text-2xl font-black tracking-tight font-mono ${
+              metrics.cashInHand > 0 ? 'text-amber-950' : 'text-slate-900'
+            }`}>
+              {formatCurrency(metrics.cashInHand, session.currencySymbol)}
+            </div>
+            <p className={`text-[11px] font-medium mt-0.5 ${
+              metrics.cashInHand > 0 ? 'text-amber-800' : 'text-slate-500'
+            }`}>
+              {metrics.cashInHand > 0 
+                ? 'Pending deposit or handover'
+                : '100% reconciled & deposited'}
+            </p>
+          </div>
+
+          <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between text-[10px]">
+            {metrics.cashInHand > 0 ? (
+              <>
+                <span className="font-bold text-amber-900">In Hand / Custody</span>
+                <button
+                  onClick={() => handleOpenRemitModal(metrics.cashInHand)}
+                  className="font-bold text-amber-800 hover:text-amber-950 underline cursor-pointer"
+                >
+                  Remit All Now →
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="text-slate-500 font-medium">All collections remitted</span>
+                <span className="font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" />
+                  Balanced
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* SUB-TABS: Remittance History vs. Student Fee Collections Stream vs. Reconciliation */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div className="border-b border-slate-200 px-4 pt-3 flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveSubTab('remittances')}
+              id="subtab-remittances"
+              className={`pb-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeSubTab === 'remittances'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <History className="w-4 h-4" />
+              <span>Remittance History ({remittances.length})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveSubTab('collections')}
+              id="subtab-collections"
+              className={`pb-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeSubTab === 'collections'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <Receipt className="w-4 h-4" />
+              <span>Student Collections ({paidStudents.length})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveSubTab('reconciliation')}
+              id="subtab-reconciliation"
+              className={`pb-3 text-xs font-bold border-b-2 flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeSubTab === 'reconciliation'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4" />
+              <span>Audit Summary</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {activeSubTab === 'remittances' && remittances.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setIsClearAllModalOpen(true)}
+                  className="pb-3 text-[11px] font-bold text-rose-600 hover:text-rose-700 flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Clear All ({remittances.length})</span>
+                </button>
+                <button
+                  onClick={handleExportCsv}
+                  className="pb-3 text-[11px] font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1 cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Export CSV</span>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Tab 1 Content: Remittance History */}
+        {activeSubTab === 'remittances' && (
+          <div className="divide-y divide-slate-100">
+            {remittances.length === 0 ? (
+              <div className="p-8 text-center space-y-3">
+                <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto">
+                  <Landmark className="w-6 h-6" />
+                </div>
+                <h3 className="text-sm font-bold text-slate-900">No Remittances Recorded Yet</h3>
+                <p className="text-xs text-slate-500 max-w-xs mx-auto">
+                  When the bursar deposits fee collections into the school bank account or hands cash over to management, record it here to balance the books.
+                </p>
+                <button
+                  onClick={() => handleOpenRemitModal()}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 transition-all inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Record First Remittance</span>
+                </button>
+              </div>
+            ) : (
+              remittances.map((remittance) => (
+                <div
+                  key={remittance.id}
+                  className="p-3.5 hover:bg-slate-50 transition-colors flex items-center justify-between gap-3"
+                >
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <Landmark className="w-4 h-4" />
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-bold text-slate-900 truncate">
+                          {remittance.remittedTo}
+                        </span>
+                        <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                          {remittance.referenceNumber}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-1 font-medium flex-wrap">
+                        <span>{formatDate(remittance.date)}</span>
+                        <span>•</span>
+                        <span className="capitalize">{remittance.paymentMethod?.replace('_', ' ') || 'Bank Deposit'}</span>
+                        {remittance.notes && (
+                          <>
+                            <span>•</span>
+                            <span className="italic truncate max-w-[180px]">"{remittance.notes}"</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="text-right">
+                      <div className="text-xs font-black text-blue-700 font-mono">
+                        {formatCurrency(remittance.amount, session.currencySymbol)}
+                      </div>
+                      <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.2 rounded">
+                        Remitted
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleOpenEditModal(remittance)}
+                        title="Edit remittance record"
+                        className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        onClick={() => setRemittanceToDelete(remittance)}
+                        title="Delete remittance record"
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* Tab 2 Content: Student Collections Stream */}
+        {activeSubTab === 'collections' && (
+          <div className="divide-y divide-slate-100">
+            {paidStudents.length === 0 ? (
+              <div className="p-8 text-center space-y-2">
+                <p className="text-xs text-slate-500 font-medium">No student fee collections recorded yet.</p>
+                {onOpenRecordPayment && (
+                  <button
+                    onClick={onOpenRecordPayment}
+                    className="px-3 py-1.5 bg-slate-900 text-white rounded-xl text-xs font-bold"
+                  >
+                    Record Student Payment
+                  </button>
+                )}
+              </div>
+            ) : (
+              <>
+                {paidStudents.slice(0, visibleCollectionsCount).map((student) => {
+                  const sTuitionPaid = Math.max(0, Number(student.amount_paid) || 0);
+                  const sAdmissionFee = Number(student.admission_fee) || 0;
+                  const sAdmissionPaid = Number(student.admission_paid) || (sAdmissionFee > 0 && student.is_new_admission ? sAdmissionFee : 0);
+                  const sLessonPaid = Math.max(0, Number(student.lesson_paid) || 0);
+                  const sExamPaid = Math.max(0, Number(student.exam_paid) || 0);
+                  const sTotalPaid = sTuitionPaid + sAdmissionPaid + sLessonPaid + sExamPaid;
+
+                  return (
+                    <div
+                      key={student.id}
+                      onClick={() => onSelectStudent && onSelectStudent(student)}
+                      className="p-3.5 hover:bg-slate-50 transition-colors flex items-center justify-between gap-3 cursor-pointer"
+                    >
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 mt-0.5">
+                          <Receipt className="w-4 h-4" />
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold text-slate-900 truncate">
+                              {student.full_name}
+                            </span>
+                            <span className="text-[10px] font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">
+                              {student.class}
+                            </span>
+                            {sAdmissionPaid > 0 && (
+                              <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded bg-purple-100 text-purple-800">
+                                New Admission
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1.5 text-[10px] text-slate-500 mt-1 font-medium flex-wrap">
+                            <span>Paid Date: {formatDate(student.payment_date)}</span>
+                            {sTuitionPaid > 0 && (
+                              <span className="px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 font-semibold">
+                                School: {formatCurrency(sTuitionPaid, session.currencySymbol)}
+                              </span>
+                            )}
+                            {sAdmissionPaid > 0 && (
+                              <span className="px-1.5 py-0.2 rounded bg-purple-50 text-purple-700 font-semibold">
+                                Admission: {formatCurrency(sAdmissionPaid, session.currencySymbol)}
+                              </span>
+                            )}
+                            {sLessonPaid > 0 && (
+                              <span className="px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 font-semibold">
+                                Lesson: {formatCurrency(sLessonPaid, session.currencySymbol)}
+                              </span>
+                            )}
+                            {sExamPaid > 0 && (
+                              <span className="px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 font-semibold">
+                                Exam: {formatCurrency(sExamPaid, session.currencySymbol)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <div className="text-xs font-black text-emerald-700 font-mono">
+                          +{formatCurrency(sTotalPaid, session.currencySymbol)}
+                        </div>
+                        <span className="text-[10px] text-slate-500 font-medium">
+                          Bal: {formatCurrency(student.balance, session.currencySymbol)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {paidStudents.length > visibleCollectionsCount && (
+                  <div className="p-3 text-center bg-slate-50 border-t border-slate-100">
+                    <button
+                      type="button"
+                      id="load-more-collections-btn"
+                      onClick={() => setVisibleCollectionsCount((prev) => prev + 30)}
+                      className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 hover:bg-slate-100 shadow-2xs cursor-pointer"
+                    >
+                      Show More Collections ({paidStudents.length - visibleCollectionsCount} remaining)
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Tab 3 Content: Audit & Reconciliation Ledger */}
+        {activeSubTab === 'reconciliation' && (
+          <div className="p-4 space-y-4 text-xs">
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2.5">
+              <h4 className="font-bold text-slate-900 text-xs uppercase tracking-tight flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-blue-600" />
+                <span>Financial Reconciliation Formula</span>
+              </h4>
+
+              <div className="space-y-1.5 font-mono text-xs pt-1">
+                <div className="flex items-center justify-between text-slate-700">
+                  <span>(A) Total Student Collections:</span>
+                  <span className="font-bold text-emerald-700">+{formatCurrency(metrics.totalCollected, session.currencySymbol)}</span>
+                </div>
+                
+                {/* Itemized Sub-Breakdown of Total Collected */}
+                <div className="pl-3 py-1 space-y-1 border-l-2 border-slate-200 text-[11px] text-slate-600">
+                  <div className="flex justify-between">
+                    <span>• School Tuition Collected:</span>
+                    <span className="font-semibold text-slate-800">{formatCurrency(metrics.totalTuitionCollected, session.currencySymbol)}</span>
+                  </div>
+                  {metrics.totalAdmissionCollected > 0 && (
+                    <div className="flex justify-between text-purple-700">
+                      <span>• New Admission Fees:</span>
+                      <span className="font-semibold">{formatCurrency(metrics.totalAdmissionCollected, session.currencySymbol)}</span>
+                    </div>
+                  )}
+                  {metrics.totalLessonCollected > 0 && (
+                    <div className="flex justify-between text-emerald-700">
+                      <span>• Lesson Fees Collected:</span>
+                      <span className="font-semibold">{formatCurrency(metrics.totalLessonCollected, session.currencySymbol)}</span>
+                    </div>
+                  )}
+                  {metrics.totalExamCollected > 0 && (
+                    <div className="flex justify-between text-amber-700">
+                      <span>• Exam Fees Collected:</span>
+                      <span className="font-semibold">{formatCurrency(metrics.totalExamCollected, session.currencySymbol)}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between text-slate-700 pt-1">
+                  <span>(B) Total Bank/Management Remittances:</span>
+                  <span className="font-bold text-blue-700">-{formatCurrency(metrics.totalRemitted, session.currencySymbol)}</span>
+                </div>
+                <div className="border-t border-slate-300 pt-1.5 flex items-center justify-between font-black text-sm">
+                  <span>(C) Net Cash in Bursar Custody:</span>
+                  <span className={metrics.cashInHand > 0 ? 'text-amber-900' : 'text-emerald-700'}>
+                    {formatCurrency(metrics.cashInHand, session.currencySymbol)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <div className="p-3 bg-white rounded-xl border border-slate-200">
+                <span className="text-[10px] text-slate-500 uppercase font-bold block mb-1">Bursar In Charge</span>
+                <span className="font-bold text-slate-900">{session.bursarName || 'Bursar'}</span>
+              </div>
+              <div className="p-3 bg-white rounded-xl border border-slate-200">
+                <span className="text-[10px] text-slate-500 uppercase font-bold block mb-1">Academic Session</span>
+                <span className="font-bold text-slate-900">{currentTerm} ({currentSession})</span>
+              </div>
+            </div>
+
+            {/* Print Voucher Button */}
+            <button
+              onClick={handlePrintAudit}
+              className="w-full py-3 bg-slate-900 hover:bg-black text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2 cursor-pointer active:scale-98 transition-all"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Print Official Reconciliation Statement</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* RECORD REMITTANCE MODAL */}
+      {isRecordModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-xs">
+                  <Landmark className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Record Fund Remittance</h3>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    Log money deposited to bank or handed to management
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsRecordModalOpen(false)}
+                className="p-1.5 rounded-full hover:bg-slate-200 text-slate-500 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveRemittance} className="p-5 space-y-4 overflow-y-auto">
+              {formError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-900 rounded-xl text-xs flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{formError}</span>
+                </div>
+              )}
+
+              {/* Amount Input with Quick Helpers */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Remittance Amount ({session.currencySymbol})
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-2.5 font-bold text-slate-400">
+                    {session.currencySymbol}
+                  </span>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    min="1"
+                    id="remittance-amount-input"
+                    value={amountInput}
+                    onChange={(e) => setAmountInput(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full pl-8 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                {/* Quick amount shortcuts */}
+                {metrics.cashInHand > 0 && (
+                  <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                    <span className="text-[10px] text-slate-500 font-semibold">Shortcuts:</span>
+                    <button
+                      type="button"
+                      onClick={() => setAmountInput(String(metrics.cashInHand))}
+                      className="px-2 py-0.5 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded text-[10px] font-bold transition-colors cursor-pointer"
+                    >
+                      All In Hand ({formatCurrency(metrics.cashInHand, session.currencySymbol)})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAmountInput(String(Math.floor(metrics.cashInHand / 2)))}
+                      className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded text-[10px] font-bold transition-colors cursor-pointer"
+                    >
+                      50% ({formatCurrency(Math.floor(metrics.cashInHand / 2), session.currencySymbol)})
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Destination / Remitted To */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Remitted To / Destination Account
+                </label>
+                <select
+                  value={remittedToInput}
+                  onChange={(e) => setRemittedToInput(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                >
+                  <option value="First Bank (School Main Account)">First Bank (School Main Account)</option>
+                  <option value="Zenith Bank (School Ops Account)">Zenith Bank (School Ops Account)</option>
+                  <option value="GTBank (Tuition Account)">GTBank (Tuition Account)</option>
+                  <option value="Principal / Proprietor Handover">Principal / Proprietor Direct Handover</option>
+                  <option value="School Management Committee">School Management Committee</option>
+                  <option value="School Cash Vault / Safe">School Cash Vault / Safe</option>
+                  <option value="Custom">Other Destination (Type Below)</option>
+                </select>
+
+                {remittedToInput === 'Custom' && (
+                  <input
+                    type="text"
+                    required
+                    value={customRecipient}
+                    onChange={(e) => setCustomRecipient(e.target.value)}
+                    placeholder="Specify bank or person name"
+                    className="w-full mt-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                )}
+              </div>
+
+              {/* Date & Payment Method */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Remittance Date
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={dateInput}
+                    onChange={(e) => setDateInput(e.target.value)}
+                    className="w-full px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Channel / Method
+                  </label>
+                  <select
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value as any)}
+                    className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  >
+                    <option value="bank_deposit">Bank Deposit</option>
+                    <option value="bank_transfer">Bank Transfer</option>
+                    <option value="cash_handover">Cash Handover</option>
+                    <option value="pos_settlement">POS Settlement</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Reference Number / Notes */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Teller No / Reference / Slip Notes <span className="text-slate-400 font-normal">(Optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={referenceNotes}
+                  onChange={(e) => setReferenceNotes(e.target.value)}
+                  placeholder="e.g. Teller #893412 or Handed to Mr. Principal"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Submit Buttons */}
+              <div className="pt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsRecordModalOpen(false)}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold hover:bg-slate-200 border border-slate-200 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  id="confirm-record-remittance-btn"
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 active:scale-98 transition-all cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Save Remittance</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE REMITTANCE CONFIRMATION MODAL */}
+      {remittanceToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 border-b border-rose-100 flex items-center justify-between bg-rose-50/70">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-rose-600 text-white flex items-center justify-center shadow-xs">
+                  <Trash2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Delete Remittance Record?</h3>
+                  <p className="text-[11px] text-rose-700 font-medium">
+                    This will remove the remitted funds entry
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRemittanceToDelete(null)}
+                disabled={isDeleting}
+                className="p-1.5 rounded-full hover:bg-slate-200 text-slate-500 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500 font-medium">Remitted Amount</span>
+                  <span className="text-base font-black text-rose-600 font-mono">
+                    {formatCurrency(remittanceToDelete.amount, session.currencySymbol)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-medium">Destination</span>
+                  <span className="font-bold text-slate-800 truncate max-w-[200px]">
+                    {remittanceToDelete.remittedTo}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-medium">Reference</span>
+                  <span className="font-mono text-slate-700">{remittanceToDelete.referenceNumber}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 font-medium">Date</span>
+                  <span className="text-slate-700">{formatDate(remittanceToDelete.date)}</span>
+                </div>
+              </div>
+
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1">
+                <p className="font-semibold flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  What happens next:
+                </p>
+                <ul className="list-disc list-inside text-[11px] text-amber-800 space-y-0.5 pl-1">
+                  <li>This amount will be deducted from <strong>Total Remitted</strong>.</li>
+                  <li>Funds will return to <strong>Cash With Bursar</strong> balance.</li>
+                  <li>Updated total will auto-sync to the Google Sheet.</li>
+                </ul>
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setRemittanceToDelete(null)}
+                  disabled={isDeleting}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold hover:bg-slate-200 border border-slate-200 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteRemittance}
+                  disabled={isDeleting}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 active:scale-98 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>{isDeleting ? 'Deleting...' : 'Yes, Delete Record'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CLEAR ALL REMITTANCES / RESET TOTAL REMITTED MODAL */}
+      {isClearAllModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 border-b border-rose-100 flex items-center justify-between bg-rose-50/70">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-rose-600 text-white flex items-center justify-center shadow-xs">
+                  <RotateCcw className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Reset Total Remitted to 0?</h3>
+                  <p className="text-[11px] text-rose-700 font-medium">
+                    Clear all {remittances.length} remittance {remittances.length === 1 ? 'record' : 'records'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsClearAllModalOpen(false)}
+                disabled={isClearingAll}
+                className="p-1.5 rounded-full hover:bg-slate-200 text-slate-500 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="bg-rose-50/50 p-3.5 rounded-2xl border border-rose-200 space-y-1.5 text-center">
+                <span className="text-xs text-rose-800 font-semibold block">Total Amount to be Cleared</span>
+                <span className="text-2xl font-black text-rose-700 font-mono block">
+                  {formatCurrency(metrics.totalRemitted, session.currencySymbol)}
+                </span>
+                <span className="text-[11px] text-slate-600 font-medium">
+                  {remittances.length} logged remittance {remittances.length === 1 ? 'transaction' : 'transactions'}
+                </span>
+              </div>
+
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1">
+                <p className="font-semibold flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  Warning:
+                </p>
+                <p className="text-[11px] text-amber-800">
+                  All remittance records will be permanently removed. The full fee collection amount ({formatCurrency(metrics.totalCollected, session.currencySymbol)}) will be restored as currently in hand with the Bursar.
+                </p>
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsClearAllModalOpen(false)}
+                  disabled={isClearingAll}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold hover:bg-slate-200 border border-slate-200 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmClearAllRemittances}
+                  disabled={isClearingAll}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 active:scale-98 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>{isClearingAll ? 'Clearing...' : 'Clear All Remittances'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT REMITTANCE MODAL */}
+      {remittanceToEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-xs">
+                  <Edit2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Edit Remittance Record</h3>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    Ref: {remittanceToEdit.referenceNumber}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRemittanceToEdit(null)}
+                className="p-1.5 rounded-full hover:bg-slate-200 text-slate-500 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditRemittance} className="p-5 space-y-4 overflow-y-auto">
+              {formError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-900 rounded-xl text-xs flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{formError}</span>
+                </div>
+              )}
+
+              {/* Amount Input */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Remittance Amount ({session.currencySymbol})
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-2.5 font-bold text-slate-400">
+                    {session.currencySymbol}
+                  </span>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    min="1"
+                    value={amountInput}
+                    onChange={(e) => setAmountInput(e.target.value)}
+                    className="w-full pl-8 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Destination / Remitted To */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Remitted To / Destination Account
+                </label>
+                <select
+                  value={remittedToInput}
+                  onChange={(e) => setRemittedToInput(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                >
+                  <option value="First Bank (School Main Account)">First Bank (School Main Account)</option>
+                  <option value="Zenith Bank (School Ops Account)">Zenith Bank (School Ops Account)</option>
+                  <option value="GTBank (Tuition Account)">GTBank (Tuition Account)</option>
+                  <option value="Principal / Proprietor Handover">Principal / Proprietor Direct Handover</option>
+                  <option value="School Management Committee">School Management Committee</option>
+                  <option value="School Cash Vault / Safe">School Cash Vault / Safe</option>
+                  <option value="Custom">Other Destination (Type Below)</option>
+                </select>
+
+                {remittedToInput === 'Custom' && (
+                  <input
+                    type="text"
+                    required
+                    value={customRecipient}
+                    onChange={(e) => setCustomRecipient(e.target.value)}
+                    placeholder="Specify bank or person name"
+                    className="w-full mt-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                )}
+              </div>
+
+              {/* Date & Payment Method */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Remittance Date
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={dateInput}
+                    onChange={(e) => setDateInput(e.target.value)}
+                    className="w-full px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Channel / Method
+                  </label>
+                  <select
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value as any)}
+                    className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  >
+                    <option value="bank_deposit">Bank Deposit</option>
+                    <option value="bank_transfer">Bank Transfer</option>
+                    <option value="cash_handover">Cash Handover</option>
+                    <option value="pos_settlement">POS Settlement</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Reference Number / Notes */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Teller No / Notes
+                </label>
+                <input
+                  type="text"
+                  value={referenceNotes}
+                  onChange={(e) => setReferenceNotes(e.target.value)}
+                  placeholder="e.g. Teller #893412"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Submit Buttons */}
+              <div className="pt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRemittanceToEdit(null)}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold hover:bg-slate-200 border border-slate-200 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isEditing}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 active:scale-98 transition-all cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{isEditing ? 'Saving...' : 'Update Remittance'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

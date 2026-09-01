@@ -1,0 +1,223 @@
+{
+  "entities": {
+    "schools": {
+      "title": "School Profile",
+      "description": "School institutional profile, financial configuration, and campus fee schedules",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 200 },
+        "type": { "type": "string", "enum": ["primary", "secondary", "combined", "nursery"] },
+        "currencySymbol": { "type": "string", "maxLength": 10 },
+        "classes": { "type": "array" },
+        "feeSchedule": { "type": "object" },
+        "classFeeSchedules": { "type": "object" },
+        "sheetConfig": { "type": "object" },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "name", "currencySymbol"]
+    },
+    "students": {
+      "title": "Student Payment Record",
+      "description": "Enrolled students with tuition breakdown, payments, arrears, and fee remissions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "full_name": { "type": "string", "maxLength": 200 },
+        "class": { "type": "string", "maxLength": 50 },
+        "term": { "type": "string", "maxLength": 50 },
+        "session": { "type": "string", "maxLength": 50 },
+        "fee_amount": { "type": "number" },
+        "amount_paid": { "type": "number" },
+        "balance": { "type": "number" },
+        "status": { "type": "string", "enum": ["paid", "partial", "unpaid", "overpaid"] },
+        "payment_date": { "type": "string", "maxLength": 50 },
+        "admission_fee": { "type": "number" },
+        "admission_paid": { "type": "number" },
+        "lesson_fee": { "type": "number" },
+        "lesson_paid": { "type": "number" },
+        "exam_fee": { "type": "number" },
+        "exam_paid": { "type": "number" },
+        "lesson_months": { "type": "string", "maxLength": 100 },
+        "receipt_no": { "type": "string", "maxLength": 100 },
+        "total_remitted": { "type": "number" },
+        "syncedToCloudAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "full_name", "class", "fee_amount"]
+    },
+    "scholarships": {
+      "title": "Scholarship Record",
+      "description": "Scholarship concessions, discounts, and benefactor endorsements",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "studentName": { "type": "string", "maxLength": 200 },
+        "studentClass": { "type": "string", "maxLength": 50 },
+        "discountPercentage": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "benefactor": { "type": "string", "maxLength": 200 },
+        "reason": { "type": "string", "maxLength": 500 },
+        "approvedBy": { "type": "string", "maxLength": 100 },
+        "term": { "type": "string", "maxLength": 50 },
+        "session": { "type": "string", "maxLength": 50 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "studentId", "studentName", "discountPercentage"]
+    },
+    "expenses": {
+      "title": "School Expense",
+      "description": "Operating school expenses, supplies, maintenance, and administrative costs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "date": { "type": "string", "maxLength": 50 },
+        "category": { "type": "string", "maxLength": 50 },
+        "categoryLabel": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "amount": { "type": "number" },
+        "payment_method": { "type": "string", "maxLength": 50 },
+        "recipient": { "type": "string", "maxLength": 200 },
+        "receipt_voucher_ref": { "type": "string", "maxLength": 100 },
+        "term": { "type": "string", "maxLength": 50 },
+        "session": { "type": "string", "maxLength": 50 },
+        "schoolId": { "type": "string", "maxLength": 128 },
+        "recorded_by": { "type": "string", "maxLength": 100 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "amount", "category"]
+    },
+    "staff": {
+      "title": "Staff Member",
+      "description": "Academic and administrative staff roster, basic salary, and allowances",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "fullName": { "type": "string", "maxLength": 200 },
+        "role": { "type": "string", "maxLength": 100 },
+        "department": { "type": "string", "maxLength": 50 },
+        "baseSalary": { "type": "number" },
+        "allowances": { "type": "object" },
+        "deductions": { "type": "object" },
+        "bankName": { "type": "string", "maxLength": 100 },
+        "accountNumber": { "type": "string", "maxLength": 50 },
+        "phone": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["active", "on_leave", "resigned"] },
+        "employmentType": { "type": "string", "enum": ["full_time", "part_time", "contract"] },
+        "joinedDate": { "type": "string", "maxLength": 50 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "fullName", "baseSalary", "department"]
+    },
+    "payroll": {
+      "title": "Payroll Record",
+      "description": "Monthly staff payroll disbursement and remittance receipts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "staffId": { "type": "string", "maxLength": 128 },
+        "staffName": { "type": "string", "maxLength": 200 },
+        "role": { "type": "string", "maxLength": 100 },
+        "department": { "type": "string", "maxLength": 50 },
+        "month": { "type": "string", "maxLength": 20 },
+        "monthLabel": { "type": "string", "maxLength": 50 },
+        "term": { "type": "string", "maxLength": 50 },
+        "session": { "type": "string", "maxLength": 50 },
+        "baseSalary": { "type": "number" },
+        "totalAllowances": { "type": "number" },
+        "allowanceBreakdown": { "type": "object" },
+        "totalDeductions": { "type": "number" },
+        "deductionBreakdown": { "type": "object" },
+        "grossPay": { "type": "number" },
+        "netPay": { "type": "number" },
+        "amountPaid": { "type": "number" },
+        "paymentStatus": { "type": "string", "enum": ["paid", "pending", "partially_paid"] },
+        "paymentDate": { "type": "string", "maxLength": 50 },
+        "paymentMethod": { "type": "string", "maxLength": 50 },
+        "referenceNumber": { "type": "string", "maxLength": 100 },
+        "processedBy": { "type": "string", "maxLength": 100 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "staffId", "month", "netPay"]
+    },
+    "audit_logs": {
+      "title": "Audit Log Entry",
+      "description": "Financial and system activity trails with actor metadata",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "timestamp": { "type": "string", "maxLength": 50 },
+        "action": { "type": "string", "maxLength": 100 },
+        "entityType": { "type": "string", "maxLength": 50 },
+        "entityId": { "type": "string", "maxLength": 128 },
+        "details": { "type": "string", "maxLength": 1000 },
+        "bursarName": { "type": "string", "maxLength": 100 },
+        "schoolId": { "type": "string", "maxLength": 128 },
+        "previousData": { "type": "object" },
+        "newData": { "type": "object" }
+      },
+      "required": ["id", "timestamp", "action", "entityType"]
+    },
+    "term_schedules": {
+      "title": "Academic Term Schedule",
+      "description": "Academic term dates, fee collection timeline, and salary due calendar",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "term": { "type": "string", "maxLength": 50 },
+        "session": { "type": "string", "maxLength": 50 },
+        "termStartDate": { "type": "string", "maxLength": 50 },
+        "termEndDate": { "type": "string", "maxLength": 50 },
+        "salaryDueDay": { "type": "number" },
+        "feeCollectionStartDate": { "type": "string", "maxLength": 50 },
+        "feeDueDate": { "type": "string", "maxLength": 50 },
+        "monthsInTerm": { "type": "array" },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "term", "termStartDate", "termEndDate"]
+    }
+  },
+  "firestore": {
+    "/schools/{schoolId}": {
+      "schema": "schools",
+      "description": "School institution profiles, settings, and fee schedules"
+    },
+    "/schools/{schoolId}/students/{studentId}": {
+      "schema": "students",
+      "description": "Student enrolled payment records and itemized fee obligations"
+    },
+    "/schools/{schoolId}/scholarships/{scholarshipId}": {
+      "schema": "scholarships",
+      "description": "Student scholarship concessions and benefactor discounts"
+    },
+    "/schools/{schoolId}/expenses/{expenseId}": {
+      "schema": "expenses",
+      "description": "School operational expenditures and receipts"
+    },
+    "/schools/{schoolId}/staff/{staffId}": {
+      "schema": "staff",
+      "description": "Staff roster, base salary, and allowance configuration"
+    },
+    "/schools/{schoolId}/payroll/{payrollId}": {
+      "schema": "payroll",
+      "description": "Monthly staff payroll disbursement records"
+    },
+    "/schools/{schoolId}/audit_logs/{logId}": {
+      "schema": "audit_logs",
+      "description": "Audit trails of financial and administrative operations"
+    },
+    "/schools/{schoolId}/term_schedules/{scheduleId}": {
+      "schema": "term_schedules",
+      "description": "Academic term schedules and calendar configurations"
+    }
+  }
+}

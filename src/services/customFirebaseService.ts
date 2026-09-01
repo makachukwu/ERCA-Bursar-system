@@ -1,0 +1,235 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { safeStorage } from './safeStorage';
+import defaultAppletConfig from '../../firebase-applet-config.json';
+import { getStoredBranding, AppBrandingConfig } from './brandingService';
+
+export interface FirebaseDeploymentConfig {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  storageBucket: string;
+  messagingSenderId: string;
+  appId: string;
+  firestoreDatabaseId: string;
+  isCustom: boolean;
+  source: 'env' | 'storage' | 'default';
+}
+
+const CUSTOM_FIREBASE_STORAGE_KEY = 'eminent_custom_firebase_config_v1';
+
+/**
+ * Returns the effective Firebase config by checking:
+ * 1. Custom settings stored in browser local storage
+ * 2. Vercel / Vite Environment variables (VITE_FIREBASE_*)
+ * 3. Default applet config
+ */
+export function getActiveFirebaseConfig(): FirebaseDeploymentConfig {
+  // 1. Check local storage override
+  try {
+    const raw = safeStorage.getItem(CUSTOM_FIREBASE_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.projectId && parsed.apiKey) {
+        return {
+          apiKey: parsed.apiKey || '',
+          authDomain: parsed.authDomain || `${parsed.projectId}.firebaseapp.com`,
+          projectId: parsed.projectId || '',
+          storageBucket: parsed.storageBucket || `${parsed.projectId}.firebasestorage.app`,
+          messagingSenderId: parsed.messagingSenderId || '',
+          appId: parsed.appId || '',
+          firestoreDatabaseId: parsed.firestoreDatabaseId || '(default)',
+          isCustom: true,
+          source: 'storage',
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[CustomFirebase] Error reading stored config:', err);
+  }
+
+  // 2. Check Vite / Vercel Environment Variables
+  const env = (import.meta as any).env || {};
+  if (env.VITE_FIREBASE_PROJECT_ID && env.VITE_FIREBASE_API_KEY) {
+    return {
+      apiKey: env.VITE_FIREBASE_API_KEY,
+      authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || `${env.VITE_FIREBASE_PROJECT_ID}.firebaseapp.com`,
+      projectId: env.VITE_FIREBASE_PROJECT_ID,
+      storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || `${env.VITE_FIREBASE_PROJECT_ID}.firebasestorage.app`,
+      messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
+      appId: env.VITE_FIREBASE_APP_ID || '',
+      firestoreDatabaseId: env.VITE_FIREBASE_DATABASE_ID || '(default)',
+      isCustom: true,
+      source: 'env',
+    };
+  }
+
+  // 3. Fallback to default Applet config
+  return {
+    apiKey: defaultAppletConfig.apiKey,
+    authDomain: defaultAppletConfig.authDomain,
+    projectId: defaultAppletConfig.projectId,
+    storageBucket: defaultAppletConfig.storageBucket,
+    messagingSenderId: defaultAppletConfig.messagingSenderId,
+    appId: defaultAppletConfig.appId,
+    firestoreDatabaseId: defaultAppletConfig.firestoreDatabaseId || '(default)',
+    isCustom: false,
+    source: 'default',
+  };
+}
+
+/**
+ * Saves custom Firebase project credentials to safeStorage
+ */
+export function saveCustomFirebaseConfig(config: {
+  apiKey: string;
+  projectId: string;
+  authDomain?: string;
+  storageBucket?: string;
+  messagingSenderId?: string;
+  appId?: string;
+  firestoreDatabaseId?: string;
+}): void {
+  const clean = {
+    apiKey: config.apiKey.trim(),
+    projectId: config.projectId.trim(),
+    authDomain: config.authDomain?.trim() || `${config.projectId.trim()}.firebaseapp.com`,
+    storageBucket: config.storageBucket?.trim() || `${config.projectId.trim()}.firebasestorage.app`,
+    messagingSenderId: config.messagingSenderId?.trim() || '',
+    appId: config.appId?.trim() || '',
+    firestoreDatabaseId: config.firestoreDatabaseId?.trim() || '(default)',
+  };
+
+  safeStorage.setItem(CUSTOM_FIREBASE_STORAGE_KEY, JSON.stringify(clean));
+}
+
+/**
+ * Clears custom Firebase credentials and reverts back to default / environment config
+ */
+export function clearCustomFirebaseConfig(): void {
+  safeStorage.removeItem(CUSTOM_FIREBASE_STORAGE_KEY);
+}
+
+/**
+ * Generates the complete Vercel / production .env template string populated with current school branding & Firebase config
+ */
+export function generateVercelEnvTemplate(branding?: AppBrandingConfig, fbConfig?: FirebaseDeploymentConfig): string {
+  const b = branding || getStoredBranding();
+  const fb = fbConfig || getActiveFirebaseConfig();
+
+  return `# =================================================================
+# BURSAR MANAGEMENT SYSTEM - VERCEL ENVIRONMENT CONFIGURATION
+# Generated for: ${b.appName}
+# =================================================================
+
+# 1. School Identity & White-Label Customization
+VITE_APP_NAME="${b.appName}"
+VITE_APP_SHORT_NAME="${b.shortName}"
+VITE_APP_TAGLINE="${b.tagline}"
+VITE_PRIMARY_COLOR="${b.primaryColor}"
+VITE_CURRENCY_SYMBOL="${b.currencySymbol}"
+VITE_SCHOOL_ADDRESS="${b.schoolAddress}"
+VITE_SCHOOL_PHONE="${b.schoolPhone}"
+VITE_SCHOOL_EMAIL="${b.schoolEmail}"
+VITE_SCHOOL_REG_NO="${b.taxOrRegNo}"
+VITE_APP_LOGO_URL="${b.logoType === 'url' ? (b.customLogoData || '') : ''}"
+
+# 2. Dedicated Cloud Firestore Database Credentials
+# (Obtain these from your Firebase Console -> Project Settings -> General -> Web App)
+VITE_FIREBASE_API_KEY="${fb.apiKey}"
+VITE_FIREBASE_AUTH_DOMAIN="${fb.authDomain}"
+VITE_FIREBASE_PROJECT_ID="${fb.projectId}"
+VITE_FIREBASE_STORAGE_BUCKET="${fb.storageBucket}"
+VITE_FIREBASE_MESSAGING_SENDER_ID="${fb.messagingSenderId}"
+VITE_FIREBASE_APP_ID="${fb.appId}"
+VITE_FIREBASE_DATABASE_ID="${fb.firestoreDatabaseId || '(default)'}"
+`;
+}
+
+/**
+ * Generates the official Firestore Security Rules (firestore.rules) required for the school's private Firebase project
+ */
+export function generateFirestoreRulesTemplate(): string {
+  return `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isSafeId(id) {
+      return id is string && id.size() > 0 && id.size() <= 256;
+    }
+
+    // Connectivity test collection for latency ping
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    // Master School Isolation Boundary & all its subcollections
+    match /schools/{schoolId} {
+      allow read, write: if isSafeId(schoolId);
+
+      // 1. Students subcollection
+      match /students/{studentId} {
+        allow read, write: if isSafeId(studentId);
+      }
+
+      // 2. Scholarships subcollection
+      match /scholarships/{scholarshipId} {
+        allow read, write: if isSafeId(scholarshipId);
+      }
+
+      // 3. Operational Expenses subcollection
+      match /expenses/{expenseId} {
+        allow read, write: if isSafeId(expenseId);
+      }
+
+      // 4. Staff Roster subcollection
+      match /staff/{staffId} {
+        allow read, write: if isSafeId(staffId);
+      }
+
+      // 5. Monthly Staff Payroll subcollection
+      match /payroll/{payrollId} {
+        allow read, write: if isSafeId(payrollId);
+      }
+
+      // 6. Audit Trail Logs (Append-only: No updates or deletes allowed)
+      match /audit_logs/{logId} {
+        allow read, create: if isSafeId(logId);
+        allow update, delete: if false; // Immutable audit log security pillar
+      }
+
+      // 7. Academic Term Schedules
+      match /term_schedules/{scheduleId} {
+        allow read, write: if isSafeId(scheduleId);
+      }
+
+      // 8. Bursar Remittances
+      match /remittances/{remittanceId} {
+        allow read, write: if isSafeId(remittanceId);
+      }
+
+      // 9. Term Backups and Snapshots
+      match /backups/{backupId} {
+        allow read, write: if isSafeId(backupId);
+      }
+
+      // Catch-all for any other nested subcollections under a school
+      match /{allChildren=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // Root-level school and metadata documents catch-all
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}`;
+}
