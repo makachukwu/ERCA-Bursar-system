@@ -61,85 +61,73 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
 
   const isAdmin = session.role === 'admin';
+  const roleLabel = isAdmin 
+    ? (session.userTitle?.toLowerCase().includes('proprietor') || session.bursarName?.toLowerCase().includes('proprietor') ? 'Proprietor' : 'Admin')
+    : 'Bursar';
 
   return (
-    <header className="shrink-0 bg-white border-b border-[#f0f0f0] px-4 sm:px-5 py-3.5 z-30">
+    <header className="shrink-0 bg-white border-b border-[#f0f0f0] px-3.5 sm:px-5 py-2.5 sm:py-3.5 z-30">
       <div className="flex items-center justify-between gap-2">
         
-        {/* Branding */}
+        {/* Branding & Status */}
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <div className="flex items-center gap-2.5">
-              <DGOSLogo size="sm" />
-              <div className="flex flex-col min-w-0">
-                <div className="flex items-center gap-2">
-                  <h1 className="text-base sm:text-lg font-black tracking-tight text-[#0f172a] uppercase leading-none truncate max-w-[200px] sm:max-w-xs md:max-w-md">
-                    {branding.shortName || branding.appName.substring(0, 15)}
-                  </h1>
-                </div>
-                <span className="text-[10px] font-bold text-slate-600 tracking-wider uppercase mt-0.5 truncate max-w-[220px] sm:max-w-sm md:max-w-lg">
-                  {branding.appName || session.schoolName}
-                </span>
+          <div className="flex items-center gap-2 sm:gap-2.5">
+            <DGOSLogo size="sm" />
+            <div className="flex flex-col min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <h1 className="text-sm sm:text-lg font-black tracking-tight text-[#0f172a] uppercase leading-tight truncate max-w-[170px] xs:max-w-[220px] sm:max-w-xs md:max-w-md">
+                  {branding.shortName || branding.appName.substring(0, 15)}
+                </h1>
               </div>
+              <span className="text-[9px] sm:text-[10px] font-bold text-slate-500 tracking-wider uppercase truncate max-w-[180px] xs:max-w-[240px] sm:max-w-sm md:max-w-lg">
+                {branding.appName || session.schoolName}
+              </span>
             </div>
           </div>
 
-          {/* Status Indicators */}
-          <div className="flex items-center gap-2 text-[11px] text-[#a0a0a0] mt-1 font-medium flex-wrap">
+          {/* Status Indicators Bar - Clean, well-structured */}
+          <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-[11px] text-slate-500 mt-1 font-medium flex-wrap">
             {/* User Role Badge */}
-            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-black text-[10px] uppercase tracking-wider ${
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-black text-[9px] sm:text-[10px] uppercase tracking-wider ${
               isAdmin ? 'bg-purple-100 text-purple-900 border border-purple-200' : 'bg-blue-100 text-blue-900 border border-blue-200'
             }`}>
-              {isAdmin ? <Shield className="w-3 h-3 text-purple-700" /> : <User className="w-3 h-3 text-blue-700" />}
-              <span>{isAdmin ? 'Admin' : 'Bursar'}: {session.bursarName}</span>
+              {isAdmin ? <Shield className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-purple-700" /> : <User className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-blue-700" />}
+              <span>{roleLabel}</span>
             </span>
 
-            <span>•</span>
+            <span className="text-slate-300">•</span>
 
-            <span className="flex items-center gap-1">
+            {/* Online / Offline status */}
+            <span className="inline-flex items-center gap-1">
               {isOnline ? (
-                <span className="inline-flex items-center gap-1 text-[#10b981] font-bold">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse"></span>
+                <span className="inline-flex items-center gap-1 text-emerald-600 font-bold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
                   Online
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 text-[#ef4444] font-bold">
+                <span className="inline-flex items-center gap-1 text-rose-500 font-bold">
                   <WifiOff className="w-3 h-3" />
                   Offline
                 </span>
               )}
             </span>
 
-            <span>•</span>
+            <span className="text-slate-300">•</span>
 
-            {/* Cloud Firestore Fast Engine indicator */}
-            <button
-              onClick={onOpenSettings}
-              id="firebase-cloud-indicator"
-              title={syncStatus?.lastFirebaseSyncTime ? `Last synced with Firestore at: ${syncStatus.lastFirebaseSyncTime}` : 'Cloud Database: Real-time Firestore synchronization active'}
-              className="inline-flex items-center gap-1.5 text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full font-semibold hover:bg-emerald-100 transition-colors cursor-pointer border border-emerald-200"
-            >
-              <Zap className="w-3.5 h-3.5 text-emerald-600 fill-emerald-500" />
-              <span>Firebase Cloud Live</span>
-            </button>
-
-            {onOpenMigrator && (
-              <>
-                <span>•</span>
-                <button
-                  onClick={onOpenMigrator}
-                  id="header-migrate-now-btn"
-                  title="Migrate Google Sheets data to Firebase Cloud"
-                  className="inline-flex items-center gap-1 text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full font-bold transition-all border border-blue-200 cursor-pointer"
-                >
-                  <Zap className="w-3 h-3 text-blue-600 fill-blue-500" />
-                  <span>Migrate Sheets</span>
-                </button>
-              </>
-            )}
-
-            <span>•</span>
-            <span className="text-slate-600 font-bold">{studentCount} Students</span>
+            {/* Cloud Live & Student Count Unified Pill Group */}
+            <div className="inline-flex items-center gap-1 bg-slate-50 border border-slate-200/80 rounded-full px-1.5 py-0.5 text-[10px]">
+              <button
+                onClick={onOpenSettings}
+                id="firebase-cloud-indicator"
+                title={syncStatus?.lastFirebaseSyncTime ? `Last synced with Firestore at: ${syncStatus.lastFirebaseSyncTime}` : 'Cloud Database: Real-time Firestore synchronization active'}
+                className="inline-flex items-center gap-1 text-emerald-700 font-semibold hover:text-emerald-800 transition-colors cursor-pointer"
+              >
+                <Zap className="w-3 h-3 text-emerald-600 fill-emerald-500" />
+                <span>Cloud Live</span>
+              </button>
+              <span className="text-slate-300">|</span>
+              <span className="text-slate-700 font-bold">{studentCount} Students</span>
+            </div>
           </div>
         </div>
 
