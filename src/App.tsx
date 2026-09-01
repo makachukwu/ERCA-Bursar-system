@@ -76,6 +76,7 @@ import { DuplicateCleanerModal } from './components/DuplicateCleanerModal';
 import { PayrollView } from './components/PayrollView';
 import { StudentUploadModal } from './components/StudentUploadModal';
 import { SheetToFirebaseMigratorModal } from './components/SheetToFirebaseMigratorModal';
+import { OfflineIndicator } from './components/OfflineIndicator';
 import { recordAuditLog } from './services/auditLoggerService';
 import {
   testConnection,
@@ -1149,8 +1150,11 @@ export default function App() {
 
   return (
     <div className="h-[100dvh] w-full bg-slate-900/5 sm:bg-slate-100 flex flex-col overflow-hidden items-center justify-center">
+      {/* Offline Status & Cloud Reconnect Banner */}
+      <OfflineIndicator />
+
       {/* Mobile-first PWA layout on small screens + Responsive Full Dashboard Canvas on Desktop */}
-      <div className="w-full max-w-md md:max-w-5xl lg:max-w-6xl xl:max-w-7xl mx-auto h-full md:my-3 md:h-[calc(100dvh-1.5rem)] bg-white shadow-2xl flex flex-col relative md:rounded-3xl border-x md:border border-slate-200/80 overflow-hidden">
+      <div className="w-full max-w-7xl mx-auto h-full md:my-3 md:h-[calc(100dvh-1.5rem)] bg-white shadow-2xl flex flex-col relative md:rounded-3xl border-x md:border border-slate-200/80 overflow-hidden">
         
         {/* Top Sticky Header */}
         <Header

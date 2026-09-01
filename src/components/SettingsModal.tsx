@@ -62,6 +62,7 @@ import { syncFeeScheduleToSheet, fetchFeeScheduleFromSheet, detectProvider, test
 import { DuplicateCleanerView } from './DuplicateCleanerView';
 import { AuditLogsView } from './AuditLogsView';
 import { SchoolBrandingCustomizer } from './SchoolBrandingCustomizer';
+import { PWAInstallButton } from './PWAInstallButton';
 import { findDuplicateGroups } from '../services/deduplicationService';
 import {
   getStoredTermSchedule,
@@ -1449,23 +1450,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-xs">
-      <div className="w-full max-w-2xl bg-white rounded-t-[32px] sm:rounded-3xl max-h-[92vh] flex flex-col shadow-2xl border border-[#f0f0f0] overflow-hidden animate-in slide-in-from-bottom duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-xs">
+      <div className="w-full max-w-4xl bg-white h-[100dvh] sm:h-auto sm:max-h-[90vh] rounded-none sm:rounded-3xl flex flex-col shadow-2xl border border-slate-200 overflow-hidden animate-in slide-in-from-bottom duration-200">
         {/* Navigation Bar */}
-        <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-[#f0f0f0] bg-white sticky top-0 z-20">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-slate-200 bg-white sticky top-0 z-20 shrink-0">
           <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
             {activeAppId ? (
               <button
                 type="button"
                 onClick={() => setActiveAppId(null)}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-indigo-700 flex items-center gap-1 transition-colors cursor-pointer mr-0.5 font-bold text-xs shrink-0 border border-slate-200 shadow-2xs"
+                className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-indigo-700 flex items-center gap-1 transition-colors cursor-pointer mr-0.5 font-bold text-xs shrink-0 border border-slate-200 shadow-2xs active:scale-95"
                 title="Back to App Gallery"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
                 <span>Back</span>
               </button>
             ) : (
-              <div className="w-9 h-9 rounded-2xl bg-[#1a1a1a] text-white flex items-center justify-center shadow-xs shrink-0">
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-2xl bg-[#1a1a1a] text-white flex items-center justify-center shadow-xs shrink-0">
                 <LayoutGrid className="w-4 h-4 text-blue-400" />
               </div>
             )}
@@ -1514,7 +1515,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <button
               onClick={onClose}
               id="close-settings-modal-btn"
-              className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-[#f4f4f7] text-[#1a1a1a] hover:bg-slate-200 flex items-center justify-center border border-[#eee] cursor-pointer"
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-[#f4f4f7] text-[#1a1a1a] hover:bg-slate-200 flex items-center justify-center border border-[#eee] cursor-pointer active:scale-95 transition-all"
             >
               <X className="w-4 h-4" />
             </button>
@@ -1522,12 +1523,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Modal Scrollable Container */}
-        <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-6">
+        <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-5">
           {/* ========================================================================= */}
           {/* VIEW 0: MAIN APP GALLERY (When activeAppId is null)                      */}
           {/* ========================================================================= */}
           {!activeAppId && (
-            <div className="space-y-6">
+            <div className="space-y-5">
+              {/* PWA & Android Installation Card */}
+              <PWAInstallButton variant="settings" />
+
               {/* Active Campus Quick Indicator Banner */}
               <div className="bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 text-white p-4 sm:p-5 rounded-3xl space-y-3 shadow-sm relative overflow-hidden">
                 <div className="flex items-center justify-between flex-wrap gap-2">

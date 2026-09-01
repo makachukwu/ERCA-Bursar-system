@@ -20,6 +20,7 @@ import { BursarSession, SchoolProfile } from '../types';
 import { DGOSLogo } from './DGOSLogo';
 import { SyncStatus } from '../services/firebase';
 import { getStoredBranding, subscribeBranding, AppBrandingConfig } from '../services/brandingService';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
   session: BursarSession;
@@ -127,6 +128,9 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Circular Action Controls */}
         <div className="flex items-center gap-1.5 shrink-0">
+          {/* PWA 1-Tap App Install Button */}
+          <PWAInstallButton variant="header" />
+
           {/* Migrate Button */}
           {onOpenMigrator && (
             <button
