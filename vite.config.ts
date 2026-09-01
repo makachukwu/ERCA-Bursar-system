@@ -11,7 +11,7 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'eminent_logo.jpg'],
+        includeAssets: ['eminent_logo.jpg', 'favicon.jpg', 'apple-touch-icon.jpg'],
         manifest: {
           id: '/',
           name: 'Eminent Royal Crown Academy — School Accounting & Fee Management',
@@ -25,21 +25,21 @@ export default defineConfig(() => {
           scope: '/',
           icons: [
             {
-              src: '/pwa-192x192.png',
+              src: '/eminent_logo.jpg',
+              sizes: '512x512',
+              type: 'image/jpeg',
+              purpose: 'any',
+            },
+            {
+              src: '/favicon.jpg',
               sizes: '192x192',
-              type: 'image/png',
+              type: 'image/jpeg',
               purpose: 'any',
             },
             {
-              src: '/pwa-512x512.png',
+              src: '/eminent_logo.jpg',
               sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/pwa-maskable-512x512.png',
-              sizes: '512x512',
-              type: 'image/png',
+              type: 'image/jpeg',
               purpose: 'maskable',
             },
           ],
