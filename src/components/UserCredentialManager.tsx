@@ -37,6 +37,25 @@ export const UserCredentialManager: React.FC<UserCredentialManagerProps> = ({
   const schoolId = session.schoolId || 'eminent-academy';
   const isAdmin = session.role === 'admin';
 
+  if (!isAdmin) {
+    return (
+      <div className="p-8 rounded-3xl bg-white border border-slate-200 text-center space-y-4 max-w-lg mx-auto shadow-xs my-6">
+        <div className="w-12 h-12 rounded-2xl bg-purple-50 text-purple-700 flex items-center justify-center mx-auto border border-purple-200">
+          <ShieldCheck className="w-6 h-6" />
+        </div>
+        <div className="space-y-2">
+          <span className="inline-block px-3 py-1 rounded-full bg-purple-100 text-purple-800 text-[10px] font-black uppercase tracking-wider">
+            Administrator Power Required
+          </span>
+          <h3 className="text-base font-bold text-slate-900">User Credentials & Security</h3>
+          <p className="text-xs text-slate-600 leading-relaxed max-w-md mx-auto">
+            Only the <strong>School Administrator (Proprietor)</strong> has authorization to view login details, manage user accounts, or change passwords. Bursars do not have access to credential details or password management.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const [users, setUsers] = useState<Record<UserRole, SystemUserAccount>>(() => getStoredSystemUsers(schoolId));
   const [activeEditingRole, setActiveEditingRole] = useState<UserRole>('admin');
 

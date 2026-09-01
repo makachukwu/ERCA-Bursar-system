@@ -1283,18 +1283,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   if (!isOpen) return null;
 
-  // List of all Apps in the Gallery
+  // List of all Apps in the Gallery (Admins have access to User Credentials & Audit Logs, Bursars do not)
+  const isAdmin = session.role === 'admin';
+
   const primaryApps = [
-    {
-      id: 'user_credentials' as AppToolId,
-      title: '👑 User Credentials & RBAC Security',
-      category: 'Security & Access Control',
-      description: 'Manage Admin & Bursar usernames, passwords, access privileges & cloud sync',
-      icon: ShieldCheck,
-      color: 'bg-purple-700 text-white',
-      badge: session.role === 'admin' ? 'Admin Full Access' : 'Bursar View Only',
-      badgeColor: session.role === 'admin' ? 'bg-purple-100 text-purple-800 font-bold' : 'bg-slate-100 text-slate-700',
-    },
+    ...(isAdmin
+      ? [
+          {
+            id: 'user_credentials' as AppToolId,
+            title: '👑 User Credentials & RBAC Security',
+            category: 'Security & Access Control',
+            description: 'Manage Admin & Bursar usernames, passwords, access privileges & cloud sync',
+            icon: ShieldCheck,
+            color: 'bg-purple-700 text-white',
+            badge: 'Admin Only',
+            badgeColor: 'bg-purple-100 text-purple-800 font-bold',
+          },
+        ]
+      : []),
     {
       id: 'school_branding' as AppToolId,
       title: '🎨 School Branding & Customizer',
@@ -1436,16 +1442,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       badge: healthStats.isClean ? 'Optimal Health' : `${healthStats.totalIssues} Alerts`,
       badgeColor: healthStats.isClean ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800',
     },
-    {
-      id: 'audit_logs' as AppToolId,
-      title: 'Activity Logs & Audit Trails',
-      category: 'Audit & Tracking',
-      description: 'Tamper-evident, undeletable logs tracking every payment, staff, expense & system action',
-      icon: Shield,
-      color: 'bg-indigo-900 text-white',
-      badge: 'Immutable',
-      badgeColor: 'bg-indigo-100 text-indigo-800',
-    },
+    ...(isAdmin
+      ? [
+          {
+            id: 'audit_logs' as AppToolId,
+            title: 'Activity Logs & Audit Trails',
+            category: 'Audit & Tracking',
+            description: 'Tamper-evident, undeletable logs tracking every payment, staff, expense & system action',
+            icon: Shield,
+            color: 'bg-indigo-900 text-white',
+            badge: 'Admin Only',
+            badgeColor: 'bg-indigo-100 text-indigo-800 font-bold',
+          },
+        ]
+      : []),
   ];
 
   // Filter gallery apps by search
@@ -3278,7 +3288,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* 11. Activity & Immutable Audit Logs Sub-App */}
           {activeAppId === 'audit_logs' && (
             <div className="space-y-4">
-              <AuditLogsView />
+              <AuditLogsView session={session} />
             </div>
           )}
 

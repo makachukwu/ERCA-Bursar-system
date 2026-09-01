@@ -30,8 +30,34 @@ import {
   AuditActionCategory,
   AuditActionSeverity
 } from '../services/auditLoggerService';
+import { BursarSession } from '../types';
 
-export const AuditLogsView: React.FC = () => {
+interface AuditLogsViewProps {
+  session?: BursarSession;
+}
+
+export const AuditLogsView: React.FC<AuditLogsViewProps> = ({ session }) => {
+  const isAdmin = session ? session.role === 'admin' : true;
+
+  if (session && !isAdmin) {
+    return (
+      <div className="p-8 rounded-3xl bg-white border border-slate-200 text-center space-y-4 max-w-lg mx-auto shadow-xs my-6">
+        <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-700 flex items-center justify-center mx-auto border border-indigo-200">
+          <Shield className="w-6 h-6" />
+        </div>
+        <div className="space-y-2">
+          <span className="inline-block px-3 py-1 rounded-full bg-indigo-100 text-indigo-800 text-[10px] font-black uppercase tracking-wider">
+            Administrator Power Required
+          </span>
+          <h3 className="text-base font-bold text-slate-900">Activity Logs & Audit Trails</h3>
+          <p className="text-xs text-slate-600 leading-relaxed max-w-md mx-auto">
+            Audit logs and system activity trails are restricted strictly to the <strong>School Administrator (Proprietor)</strong>. Bursars do not have access to view or export system logs.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const [logs, setLogs] = useState<AuditLogEntry[]>(() => getStoredAuditLogs());
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
