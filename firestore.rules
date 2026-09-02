@@ -77,6 +77,11 @@ service cloud.firestore {
         allow read, write: if isSafeId(userId);
       }
 
+      // 11. School Branding Configuration & Custom Logo Assets
+      match /branding/{brandingId} {
+        allow read, write: if isSafeId(brandingId);
+      }
+
       // Catch-all for any other nested subcollections under a school
       match /{allChildren=**} {
         allow read, write: if true;

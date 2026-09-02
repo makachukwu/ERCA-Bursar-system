@@ -203,6 +203,44 @@ export function clearAllRemittances(
 }
 
 /**
+ * Merges local and remote remittance records by ID without duplicates,
+ * prioritizing the most recently updated or approved record.
+ */
+export function mergeRemittanceRecords(
+  local: RemittanceRecord[],
+  remote: RemittanceRecord[]
+): RemittanceRecord[] {
+  const map = new Map<string, RemittanceRecord>();
+
+  (local || []).forEach((item) => {
+    if (item && item.id) {
+      map.set(item.id, item);
+    }
+  });
+
+  (remote || []).forEach((item) => {
+    if (!item || !item.id) return;
+    const existing = map.get(item.id);
+    if (!existing) {
+      map.set(item.id, item);
+    } else {
+      // Compare timestamps or status priority
+      const existingTime = new Date((existing as any).updatedAt || existing.approvedAt || existing.timestamp || 0).getTime();
+      const remoteTime = new Date((item as any).updatedAt || item.approvedAt || item.timestamp || 0).getTime();
+
+      // If remote has an explicit approval/rejection or is more recent, prefer remote
+      if (item.status === 'approved' || item.status === 'rejected' || remoteTime >= existingTime) {
+        map.set(item.id, item);
+      }
+    }
+  });
+
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
+  );
+}
+
+/**
  * Calculates collection, remittance, and cash-in-hand totals.
  * ONLY approved remittances are committed to the official ledger / cash-in-hand deduction.
  */

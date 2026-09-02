@@ -13,12 +13,14 @@ interface BottomNavProps {
   activeTab: TabType;
   onTabChange: (tab: TabType) => void;
   studentCount: number;
+  pendingRemittanceCount?: number;
 }
 
 export const BottomNav: React.FC<BottomNavProps> = ({
   activeTab,
   onTabChange,
   studentCount,
+  pendingRemittanceCount = 0,
 }) => {
   return (
     <nav className="shrink-0 z-50 border-t border-slate-200 flex items-center justify-around px-1 sm:px-4 md:px-8 bg-white pb-[max(0.6rem,env(safe-area-inset-bottom))] pt-1.5 md:py-2.5 shadow-[0_-4px_20px_rgba(0,0,0,0.06)] touch-manipulation select-none">
@@ -160,13 +162,21 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         className="flex flex-col items-center justify-center gap-0.5 md:gap-1 group cursor-pointer active:scale-95 transition-transform flex-1 min-w-0 py-1 min-h-[48px]"
       >
         <div
-          className={`p-1.5 sm:p-2 md:p-2.5 rounded-xl transition-all ${
+          className={`p-1.5 sm:p-2 md:p-2.5 rounded-xl transition-all relative ${
             activeTab === 'collection'
               ? 'bg-slate-900 text-white shadow-xs'
               : 'bg-transparent text-slate-400 hover:text-slate-800'
           }`}
         >
           <HandCoins className="w-4 h-4 md:w-5 md:h-5 shrink-0" />
+          {pendingRemittanceCount > 0 && (
+            <span
+              className="absolute -top-1 -right-1 text-[8px] md:text-[9px] font-black px-1.5 py-0.2 rounded-full border border-white bg-amber-500 text-white shadow-xs animate-pulse"
+              title={`${pendingRemittanceCount} pending remittance(s) awaiting approval`}
+            >
+              {pendingRemittanceCount}
+            </span>
+          )}
         </div>
         <span
           className={`text-[8px] sm:text-[9px] md:text-[11px] font-bold uppercase md:capitalize tracking-tight transition-colors truncate max-w-full leading-none ${

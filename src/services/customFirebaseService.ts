@@ -5,7 +5,7 @@
 
 import { safeStorage } from './safeStorage';
 import defaultAppletConfig from '../../firebase-applet-config.json';
-import { getStoredBranding, AppBrandingConfig } from './brandingService';
+import type { AppBrandingConfig } from '../types';
 
 export interface FirebaseDeploymentConfig {
   apiKey: string;
@@ -113,11 +113,39 @@ export function clearCustomFirebaseConfig(): void {
   safeStorage.removeItem(CUSTOM_FIREBASE_STORAGE_KEY);
 }
 
+function getLocalBrandingConfig(): Partial<AppBrandingConfig> {
+  try {
+    const raw = safeStorage.getItem('eminent_app_branding_v1');
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // Ignore error
+  }
+  return {};
+}
+
 /**
  * Generates the complete Vercel / production .env template string populated with current school branding & Firebase config
  */
 export function generateVercelEnvTemplate(branding?: AppBrandingConfig, fbConfig?: FirebaseDeploymentConfig): string {
-  const b = branding || getStoredBranding();
+  const localB = getLocalBrandingConfig();
+  const b = branding || {
+    appName: localB.appName || 'Eminent Royal Crown Academy',
+    shortName: localB.shortName || 'EMINENT A/C',
+    tagline: localB.tagline || 'Automated School Fee & Bursary Management System',
+    primaryColor: localB.primaryColor || '#0044B5',
+    currencySymbol: localB.currencySymbol || '₦',
+    schoolAddress: localB.schoolAddress || 'Keffi, Nasarawa State, Nigeria',
+    schoolPhone: localB.schoolPhone || '+234 800 000 0000',
+    schoolEmail: localB.schoolEmail || 'bursary@eminentacademy.edu.ng',
+    taxOrRegNo: localB.taxOrRegNo || 'MOE/NAS/SEC/2026/894',
+    logoType: localB.logoType || 'default_crest',
+    customLogoData: localB.customLogoData || '',
+    presetEmblem: localB.presetEmblem || 'crown',
+    emblemColor: localB.emblemColor || '#0044B5',
+    bursarTitle: localB.bursarTitle || 'Authorized Bursar / Accounts Officer',
+    receiptFooterText: localB.receiptFooterText || 'Official School Fee & Bursary Computerized Payment Receipt.',
+    enableWatermark: true,
+  };
   const fb = fbConfig || getActiveFirebaseConfig();
 
   return `# =================================================================

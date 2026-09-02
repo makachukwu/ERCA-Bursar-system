@@ -36,17 +36,27 @@ import {
 import { StudentPaymentRecord, RemittanceRecord, BursarSession } from '../types';
 import { 
   getSavedRemittances, 
+  saveRemittances,
   addRemittance, 
   deleteRemittance, 
   updateRemittance,
   approveRemittance,
   rejectRemittance,
   clearAllRemittances,
-  calculateCollectionMetrics
+  calculateCollectionMetrics,
+  mergeRemittanceRecords
 } from '../services/remittanceService';
 import { formatCurrency, formatDate, getTodayDateString } from '../services/calculations';
 import { recordAuditLog } from '../services/auditLoggerService';
-import { batchSaveStudentsToFirestore } from '../services/firebase';
+import { 
+  batchSaveStudentsToFirestore,
+  saveRemittanceToFirestore,
+  getRemittancesFromFirestore,
+  subscribeRemittancesFromFirestore,
+  deleteRemittanceFromFirestore,
+  wipeSchoolRemittancesFromFirestore,
+  recordFirebaseSyncSuccess
+} from '../services/firebase';
 
 interface CollectionViewProps {
   students: StudentPaymentRecord[];
@@ -93,12 +103,90 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
   const [formError, setFormError] = useState<string | null>(null);
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [errorToast, setErrorToast] = useState<string | null>(null);
+  const [isSyncingRemittances, setIsSyncingRemittances] = useState(false);
 
-  // Load remittances when active school changes
+  const currentSchoolId = session.schoolId || 'eminent-academy';
+
+  // 1. Load initial local remittances immediately for zero-wait display
   useEffect(() => {
-    const loaded = getSavedRemittances(session.schoolId || 'eminent-academy');
+    const loaded = getSavedRemittances(currentSchoolId);
     setRemittances(loaded);
-  }, [session.schoolId]);
+  }, [currentSchoolId]);
+
+  // 2. Real-time Firestore synchronization & automatic cloud reconciliation
+  useEffect(() => {
+    let isCancelled = false;
+
+    // Fast initial query + automatic reconciliation of unsynced local records
+    getRemittancesFromFirestore(currentSchoolId)
+      .then(async (cloudRemittances) => {
+        if (isCancelled) return;
+        const local = getSavedRemittances(currentSchoolId);
+
+        // Upload any local remittances that are not yet in Firestore (e.g. created on bursar device before online sync)
+        const cloudIds = new Set(cloudRemittances.map((r) => r.id));
+        const unsynced = local.filter((r) => r.id && !cloudIds.has(r.id));
+        if (unsynced.length > 0) {
+          for (const item of unsynced) {
+            await saveRemittanceToFirestore(item, currentSchoolId).catch((err) => {
+              console.warn('[Remittance Sync] Background upload note:', err);
+            });
+          }
+        }
+
+        const merged = mergeRemittanceRecords(local, cloudRemittances);
+        setRemittances(merged);
+        saveRemittances(merged, currentSchoolId);
+        recordFirebaseSyncSuccess();
+      })
+      .catch((err) => {
+        console.warn('[Firestore] Initial remittance load note:', err);
+      });
+
+    // Real-time snapshot listener: when bursar adds or admin approves, all connected devices update instantly
+    const unsubscribe = subscribeRemittancesFromFirestore(currentSchoolId, (liveRemittances) => {
+      if (isCancelled) return;
+      setRemittances((prevLocal) => {
+        const merged = mergeRemittanceRecords(prevLocal, liveRemittances);
+        saveRemittances(merged, currentSchoolId);
+        return merged;
+      });
+    });
+
+    return () => {
+      isCancelled = true;
+      if (unsubscribe) unsubscribe();
+    };
+  }, [currentSchoolId]);
+
+  // Manual cloud refresh handler
+  const handleManualCloudSync = async () => {
+    setIsSyncingRemittances(true);
+    try {
+      const cloudRemittances = await getRemittancesFromFirestore(currentSchoolId);
+      const local = getSavedRemittances(currentSchoolId);
+
+      // Reconcile
+      const cloudIds = new Set(cloudRemittances.map((r) => r.id));
+      const unsynced = local.filter((r) => r.id && !cloudIds.has(r.id));
+      for (const item of unsynced) {
+        await saveRemittanceToFirestore(item, currentSchoolId).catch(console.warn);
+      }
+
+      const merged = mergeRemittanceRecords(local, cloudRemittances);
+      setRemittances(merged);
+      saveRemittances(merged, currentSchoolId);
+      recordFirebaseSyncSuccess();
+
+      setSuccessToast(`✓ Cloud synchronized! Loaded ${merged.length} remittance records.`);
+      setTimeout(() => setSuccessToast(null), 3500);
+    } catch (err: any) {
+      setErrorToast('Cloud sync error: ' + (err?.message || 'Check connection'));
+      setTimeout(() => setErrorToast(null), 4000);
+    } finally {
+      setIsSyncingRemittances(false);
+    }
+  };
 
   const [visibleCollectionsCount, setVisibleCollectionsCount] = useState(30);
 
@@ -184,7 +272,7 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
       const userRole = session.role || (isAdmin ? 'admin' : 'bursar');
       const isAutoApproved = userRole === 'admin';
 
-      const { allRecords } = addRemittance(
+      const { newRecord, allRecords } = addRemittance(
         {
           amount: numAmount,
           date: dateInput || getTodayDateString(),
@@ -202,11 +290,18 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
           approvedAt: isAutoApproved ? new Date().toISOString() : undefined,
         },
         remittances,
-        session.schoolId || 'eminent-academy'
+        currentSchoolId
       );
 
       setRemittances(allRecords);
       setIsRecordModalOpen(false);
+
+      // Persist to Cloud Firestore immediately for multi-device sync
+      try {
+        await saveRemittanceToFirestore(newRecord, currentSchoolId);
+      } catch (cloudErr) {
+        console.warn('[Remittance] Cloud sync note:', cloudErr);
+      }
 
       // Only approved remittances update total_remitted in official student books
       const newTotalApprovedRemitted = allRecords
@@ -265,14 +360,23 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
 
     setIsApprovingId(remittance.id);
     try {
-      const { allRecords } = approveRemittance(
+      const { approvedRecord, allRecords } = approveRemittance(
         remittance.id,
         session.bursarName || 'Administrator',
         remittances,
-        session.schoolId || 'eminent-academy'
+        currentSchoolId
       );
 
       setRemittances(allRecords);
+
+      // Persist approval status to Cloud Firestore immediately
+      if (approvedRecord) {
+        try {
+          await saveRemittanceToFirestore(approvedRecord, currentSchoolId);
+        } catch (cloudErr) {
+          console.warn('[Remittance Approval] Cloud sync note:', cloudErr);
+        }
+      }
 
       const newTotalApprovedRemitted = allRecords
         .filter((r) => r.status === 'approved' || r.approvalStatus === 'approved' || (!r.status && !r.approvalStatus))
@@ -316,15 +420,24 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
 
     const reason = rejectionReasonInput.trim() || 'Rejected by Administrator during book reconciliation';
     try {
-      const { allRecords } = rejectRemittance(
+      const { rejectedRecord, allRecords } = rejectRemittance(
         remittanceToReject.id,
         session.bursarName || 'Administrator',
         reason,
         remittances,
-        session.schoolId || 'eminent-academy'
+        currentSchoolId
       );
 
       setRemittances(allRecords);
+
+      // Persist rejection to Cloud Firestore
+      if (rejectedRecord) {
+        try {
+          await saveRemittanceToFirestore(rejectedRecord, currentSchoolId);
+        } catch (cloudErr) {
+          console.warn('[Remittance Rejection] Cloud sync note:', cloudErr);
+        }
+      }
 
       const newTotalApprovedRemitted = allRecords
         .filter((r) => r.status === 'approved' || r.approvalStatus === 'approved' || (!r.status && !r.approvalStatus))
@@ -386,11 +499,21 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
           paymentMethod,
         },
         remittances,
-        session.schoolId || 'eminent-academy'
+        currentSchoolId
       );
 
       setRemittances(updated);
       setRemittanceToEdit(null);
+
+      // Persist edited record to Cloud Firestore
+      const updatedItem = updated.find((r) => r.id === remittanceToEdit.id);
+      if (updatedItem) {
+        try {
+          await saveRemittanceToFirestore(updatedItem, currentSchoolId);
+        } catch (cloudErr) {
+          console.warn('[Remittance Edit] Cloud sync note:', cloudErr);
+        }
+      }
 
       const newTotalRemitted = updated.reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
 
@@ -426,9 +549,16 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
     setIsDeleting(true);
     try {
       const deletedAmount = remittanceToDelete.amount;
-      const updated = deleteRemittance(remittanceToDelete.id, remittances, session.schoolId || 'eminent-academy');
+      const updated = deleteRemittance(remittanceToDelete.id, remittances, currentSchoolId);
       setRemittances(updated);
       setRemittanceToDelete(null);
+
+      // Delete from Cloud Firestore
+      try {
+        await deleteRemittanceFromFirestore(remittanceToDelete.id, currentSchoolId);
+      } catch (cloudErr) {
+        console.warn('[Remittance Delete] Cloud sync note:', cloudErr);
+      }
 
       const newTotalRemitted = updated.reduce((acc, r) => acc + (Number(r.amount) || 0), 0);
 
@@ -462,9 +592,16 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
   const confirmClearAllRemittances = async () => {
     setIsClearingAll(true);
     try {
-      const updated = clearAllRemittances(session.schoolId || 'eminent-academy');
+      const updated = clearAllRemittances(currentSchoolId);
       setRemittances(updated);
       setIsClearAllModalOpen(false);
+
+      // Wipe from Cloud Firestore
+      try {
+        await wipeSchoolRemittancesFromFirestore(currentSchoolId);
+      } catch (cloudErr) {
+        console.warn('[Remittance Wipe] Cloud sync note:', cloudErr);
+      }
 
       const newTotalRemitted = 0;
 
@@ -613,6 +750,17 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleManualCloudSync}
+            disabled={isSyncingRemittances}
+            id="sync-remittances-top-btn"
+            title="Synchronize with Cloud Firestore to fetch records from other devices"
+            className="p-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-200 text-xs font-bold flex items-center gap-1 active:scale-95 transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 text-slate-600 ${isSyncingRemittances ? 'animate-spin text-blue-600' : ''}`} />
+            <span className="hidden sm:inline">Sync Cloud</span>
+          </button>
+
           <button
             onClick={() => handleOpenRemitModal()}
             id="record-remittance-top-btn"
@@ -916,6 +1064,17 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
 
                 {/* Prominent Action Buttons Above */}
                 <div className="flex items-center gap-2 flex-wrap sm:shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleManualCloudSync}
+                    disabled={isSyncingRemittances}
+                    title="Synchronize with Cloud Firestore to fetch remittances from other devices"
+                    className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-blue-200 border border-slate-700 rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingRemittances ? 'animate-spin text-blue-400' : 'text-blue-300'}`} />
+                    <span>{isSyncingRemittances ? 'Syncing...' : 'Sync Cloud'}</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => handleOpenRemitModal()}

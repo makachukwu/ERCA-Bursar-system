@@ -47,8 +47,9 @@ import {
   SchoolProfile,
   AcademicTermSchedule,
   RemittanceRecord,
+  AppBrandingConfig,
+  AuditLogEntry,
 } from '../types';
-import { AuditLogEntry } from './auditLoggerService';
 import defaultFirebaseConfig from '../../firebase-applet-config.json';
 import { safeStorage } from './safeStorage';
 import { getActiveFirebaseConfig, FirebaseDeploymentConfig } from './customFirebaseService';
@@ -1568,6 +1569,157 @@ export async function getAuditLogsFromFirestore(
         return [];
       }
     }
+  }
+}
+
+export function subscribeAuditLogsFromFirestore(
+  schoolId: string = 'eminent-academy',
+  callback: (logs: AuditLogEntry[]) => void,
+  maxCount: number = 200
+): Unsubscribe | null {
+  const firestore = getFirebaseDb();
+  if (!firestore) return null;
+
+  const targetPath = `schools/${schoolId.toLowerCase()}/audit_logs`;
+  try {
+    const colRef = collection(firestore, 'schools', schoolId.toLowerCase(), 'audit_logs');
+    const q = query(colRef, orderBy('timestamp', 'desc'), limit(maxCount));
+
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const list: AuditLogEntry[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data() as AuditLogEntry;
+          if (data && data.id) {
+            list.push(data);
+          }
+        });
+        callback(list);
+      },
+      (err) => {
+        console.warn('[Firestore] Audit logs ordered subscription note:', err);
+        // Fallback without ordering if composite index is not yet built
+        try {
+          return onSnapshot(
+            colRef,
+            (snap) => {
+              const list: AuditLogEntry[] = [];
+              snap.forEach((docSnap) => {
+                const data = docSnap.data() as AuditLogEntry;
+                if (data && data.id) list.push(data);
+              });
+              list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+              callback(list.slice(0, maxCount));
+            },
+            (err2) => {
+              console.warn('[Firestore] Audit log unordered subscription notice:', err2);
+              try {
+                handleFirestoreError(err2, OperationType.GET, targetPath);
+              } catch {}
+            }
+          );
+        } catch {
+          return;
+        }
+      }
+    );
+  } catch (err) {
+    console.warn('[Firestore] Error subscribing to audit logs:', err);
+    return null;
+  }
+}
+
+/**
+ * ============================================================================
+ * SCHOOL BRANDING & LOGO FIRESTORE REPOSITORY
+ * ============================================================================
+ */
+
+export async function saveBrandingToFirestore(
+  branding: AppBrandingConfig,
+  schoolId: string = 'eminent-academy'
+): Promise<boolean> {
+  const firestore = getFirebaseDb();
+  if (!firestore) return false;
+
+  const targetPath = `schools/${schoolId.toLowerCase()}/branding/config`;
+  try {
+    const docRef = doc(firestore, 'schools', schoolId.toLowerCase(), 'branding', 'config');
+    const cleanData = sanitizeForFirestore({
+      ...branding,
+      id: 'config',
+      schoolId: schoolId.toLowerCase(),
+      updatedAt: new Date().toISOString(),
+    });
+    await setDoc(docRef, cleanData, { merge: true });
+    recordFirebaseSyncSuccess();
+    return true;
+  } catch (err) {
+    console.warn('[Firestore] Error saving school branding:', err);
+    try {
+      handleFirestoreError(err, OperationType.WRITE, targetPath);
+    } catch {
+      return false;
+    }
+  }
+}
+
+export async function getBrandingFromFirestore(
+  schoolId: string = 'eminent-academy'
+): Promise<AppBrandingConfig | null> {
+  const firestore = getFirebaseDb();
+  if (!firestore) return null;
+
+  const targetPath = `schools/${schoolId.toLowerCase()}/branding/config`;
+  try {
+    const docRef = doc(firestore, 'schools', schoolId.toLowerCase(), 'branding', 'config');
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      const data = docSnap.data() as AppBrandingConfig;
+      return data;
+    }
+    return null;
+  } catch (err) {
+    console.warn('[Firestore] Error reading school branding:', err);
+    try {
+      handleFirestoreError(err, OperationType.GET, targetPath);
+    } catch {
+      return null;
+    }
+  }
+}
+
+export function subscribeBrandingFromFirestore(
+  schoolId: string = 'eminent-academy',
+  callback: (branding: AppBrandingConfig) => void
+): Unsubscribe | null {
+  const firestore = getFirebaseDb();
+  if (!firestore) return null;
+
+  const targetPath = `schools/${schoolId.toLowerCase()}/branding/config`;
+  try {
+    const docRef = doc(firestore, 'schools', schoolId.toLowerCase(), 'branding', 'config');
+    return onSnapshot(
+      docRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data() as AppBrandingConfig;
+          if (data && data.appName) {
+            callback(data);
+          }
+        }
+      },
+      (err) => {
+        console.warn('[Firestore] Error in branding listener:', err);
+        try {
+          handleFirestoreError(err, OperationType.GET, targetPath);
+        } catch {}
+      }
+    );
+  } catch (err) {
+    console.warn('[Firestore] Error subscribing to branding:', err);
+    return null;
   }
 }
 

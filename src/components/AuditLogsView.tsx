@@ -3,7 +3,7 @@
  * Displays undeletable, chronological audit trails of all activities across Eminent A/C System
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Shield,
   Search,
@@ -20,24 +20,35 @@ import {
   ArrowUpDown,
   RefreshCw,
   Eye,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Cloud,
+  Check
 } from 'lucide-react';
 import {
   getStoredAuditLogs,
+  saveStoredAuditLogs,
+  mergeAuditLogs,
   exportAuditLogsCSV,
   exportAuditLogsJSON,
   AuditLogEntry,
   AuditActionCategory,
   AuditActionSeverity
 } from '../services/auditLoggerService';
+import {
+  subscribeAuditLogsFromFirestore,
+  getAuditLogsFromFirestore,
+  saveAuditLogToFirestore
+} from '../services/firebase';
 import { BursarSession } from '../types';
 
 interface AuditLogsViewProps {
   session?: BursarSession;
+  schoolId?: string;
 }
 
-export const AuditLogsView: React.FC<AuditLogsViewProps> = ({ session }) => {
+export const AuditLogsView: React.FC<AuditLogsViewProps> = ({ session, schoolId }) => {
   const isAdmin = session ? session.role === 'admin' : true;
+  const targetSchoolId = schoolId || session?.schoolId || 'eminent-academy';
 
   if (session && !isAdmin) {
     return (
@@ -63,9 +74,83 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({ session }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [selectedSeverity, setSelectedSeverity] = useState<string>('ALL');
   const [selectedLogForDetails, setSelectedLogForDetails] = useState<AuditLogEntry | null>(null);
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+  const [isCloudLive, setIsCloudLive] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
-  const refreshLogs = () => {
-    setLogs(getStoredAuditLogs());
+  // Synchronize with Cloud Firestore in real time
+  useEffect(() => {
+    let isMounted = true;
+
+    // 1. Subscribe to live Firestore stream
+    const unsubscribe = subscribeAuditLogsFromFirestore(
+      targetSchoolId,
+      (cloudLogs) => {
+        if (!isMounted) return;
+        setLogs((currentLogs) => {
+          const merged = mergeAuditLogs(currentLogs, cloudLogs);
+          saveStoredAuditLogs(merged);
+          return merged;
+        });
+        setIsCloudLive(true);
+        setLastSyncedAt(new Date());
+      },
+      200
+    );
+
+    // 2. Perform initial reconciliation: pull latest cloud logs and push any missing local logs
+    const reconcileLogs = async () => {
+      setIsCloudSyncing(true);
+      try {
+        const cloudLogs = await getAuditLogsFromFirestore(targetSchoolId, 200);
+        if (!isMounted) return;
+
+        const localLogs = getStoredAuditLogs();
+        const merged = mergeAuditLogs(localLogs, cloudLogs);
+        setLogs(merged);
+        saveStoredAuditLogs(merged);
+
+        // Upload any local logs that are not present in Firestore
+        const cloudIdSet = new Set(cloudLogs.map((c) => c.id));
+        const unsyncedLocalLogs = localLogs.filter((l) => !cloudIdSet.has(l.id));
+        if (unsyncedLocalLogs.length > 0) {
+          for (const unsynced of unsyncedLocalLogs) {
+            await saveAuditLogToFirestore(unsynced, targetSchoolId);
+          }
+        }
+        setIsCloudLive(true);
+        setLastSyncedAt(new Date());
+      } catch (err) {
+        console.warn('[Audit Sync Reconcile Error]:', err);
+      } finally {
+        if (isMounted) setIsCloudSyncing(false);
+      }
+    };
+
+    reconcileLogs();
+
+    return () => {
+      isMounted = false;
+      if (unsubscribe) unsubscribe();
+    };
+  }, [targetSchoolId]);
+
+  const refreshLogs = async () => {
+    setIsCloudSyncing(true);
+    try {
+      const cloudLogs = await getAuditLogsFromFirestore(targetSchoolId, 200);
+      const localLogs = getStoredAuditLogs();
+      const merged = mergeAuditLogs(localLogs, cloudLogs);
+      setLogs(merged);
+      saveStoredAuditLogs(merged);
+      setIsCloudLive(true);
+      setLastSyncedAt(new Date());
+    } catch (err) {
+      console.warn('[Audit Sync Manual Error]:', err);
+      setLogs(getStoredAuditLogs());
+    } finally {
+      setIsCloudSyncing(false);
+    }
   };
 
   const filteredLogs = useMemo(() => {
@@ -160,16 +245,22 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({ session }) => {
       <div className="p-4 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white border border-slate-800 shadow-md">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="space-y-1">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <div className="w-8 h-8 rounded-xl bg-indigo-500/20 text-indigo-300 flex items-center justify-center border border-indigo-400/30">
                 <Shield className="w-4 h-4" />
               </div>
               <h3 className="text-sm sm:text-base font-black tracking-tight uppercase">
                 System Audit & Immutable Activity Tracker
               </h3>
+              {/* Cloud Sync Status Indicator */}
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[10px] font-bold">
+                <span className={`w-2 h-2 rounded-full ${isCloudLive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-400'}`} />
+                <Cloud className="w-3 h-3" />
+                <span>{isCloudSyncing ? 'Syncing with Firestore...' : isCloudLive ? 'Firestore Live Sync' : 'Connecting to Cloud...'}</span>
+              </div>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed max-w-xl">
-              Automatic, tamper-evident recording of every financial transaction, student update, payroll disbursal, remittance, and system action.
+              Automatic, tamper-evident recording of every financial transaction, student update, payroll disbursal, remittance, and system action. Synchronized across all bursar devices via Cloud Firestore.
             </p>
           </div>
 
@@ -177,11 +268,12 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({ session }) => {
             <button
               type="button"
               onClick={refreshLogs}
-              className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold flex items-center gap-1.5 transition-colors border border-white/10 cursor-pointer"
-              title="Refresh log entries"
+              disabled={isCloudSyncing}
+              className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold flex items-center gap-1.5 transition-colors border border-white/10 cursor-pointer disabled:opacity-50"
+              title="Synchronize and refresh log entries from Cloud Firestore"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Refresh</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${isCloudSyncing ? 'animate-spin text-indigo-300' : ''}`} />
+              <span>{isCloudSyncing ? 'Syncing...' : 'Sync Cloud'}</span>
             </button>
             <button
               type="button"

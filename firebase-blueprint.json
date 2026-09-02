@@ -156,16 +156,18 @@
       "properties": {
         "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "timestamp": { "type": "string", "maxLength": 50 },
+        "readableTime": { "type": "string", "maxLength": 100 },
         "action": { "type": "string", "maxLength": 100 },
-        "entityType": { "type": "string", "maxLength": 50 },
-        "entityId": { "type": "string", "maxLength": 128 },
-        "details": { "type": "string", "maxLength": 1000 },
-        "bursarName": { "type": "string", "maxLength": 100 },
+        "category": { "type": "string", "maxLength": 50 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "performer": { "type": "string", "maxLength": 100 },
         "schoolId": { "type": "string", "maxLength": 128 },
+        "severity": { "type": "string", "maxLength": 20 },
+        "details": { "type": "object" },
         "previousData": { "type": "object" },
         "newData": { "type": "object" }
       },
-      "required": ["id", "timestamp", "action", "entityType"]
+      "required": ["id", "timestamp", "action"]
     },
     "term_schedules": {
       "title": "Academic Term Schedule",
@@ -184,6 +186,33 @@
         "updatedAt": { "type": "string", "maxLength": 50 }
       },
       "required": ["id", "term", "termStartDate", "termEndDate"]
+    },
+    "branding": {
+      "title": "School Identity and Branding Configuration",
+      "description": "Customized school logos, crests, brand colors, contact details, and receipt footer policies",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "appName": { "type": "string", "maxLength": 200 },
+        "shortName": { "type": "string", "maxLength": 100 },
+        "tagline": { "type": "string", "maxLength": 300 },
+        "logoType": { "type": "string", "enum": ["default_crest", "custom_upload", "url", "preset_emblem"] },
+        "customLogoData": { "type": "string" },
+        "presetEmblem": { "type": "string", "maxLength": 50 },
+        "emblemColor": { "type": "string", "maxLength": 50 },
+        "primaryColor": { "type": "string", "maxLength": 50 },
+        "schoolAddress": { "type": "string", "maxLength": 300 },
+        "schoolPhone": { "type": "string", "maxLength": 100 },
+        "schoolEmail": { "type": "string", "maxLength": 100 },
+        "taxOrRegNo": { "type": "string", "maxLength": 100 },
+        "bursarTitle": { "type": "string", "maxLength": 100 },
+        "currencySymbol": { "type": "string", "maxLength": 10 },
+        "receiptFooterText": { "type": "string", "maxLength": 500 },
+        "enableWatermark": { "type": "boolean" },
+        "schoolId": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["appName", "shortName", "primaryColor"]
     }
   },
   "firestore": {
@@ -218,6 +247,10 @@
     "/schools/{schoolId}/term_schedules/{scheduleId}": {
       "schema": "term_schedules",
       "description": "Academic term schedules and calendar configurations"
+    },
+    "/schools/{schoolId}/branding/{brandingId}": {
+      "schema": "branding",
+      "description": "Institutional branding assets and receipt headers for a given school"
     }
   }
 }

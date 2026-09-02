@@ -33,14 +33,19 @@ import {
   CheckCircle2,
   AlertCircle,
   HelpCircle,
+  Cloud,
+  RefreshCw,
 } from 'lucide-react';
 import {
   getStoredBranding,
   saveStoredBranding,
   resetStoredBranding,
+  syncBrandingFromCloud,
+  applyCloudBranding,
   AppBrandingConfig,
   DEFAULT_BRANDING,
 } from '../services/brandingService';
+import { subscribeBrandingFromFirestore } from '../services/firebase';
 import { DGOSLogo } from './DGOSLogo';
 
 const PRESET_EMBLEMS: Array<{ id: AppBrandingConfig['presetEmblem']; label: string; icon: React.ReactNode }> = [
@@ -66,20 +71,50 @@ const PRESET_COLORS = [
 
 interface SchoolBrandingCustomizerProps {
   onNotify?: (message: string) => void;
+  schoolId?: string;
 }
 
-export const SchoolBrandingCustomizer: React.FC<SchoolBrandingCustomizerProps> = ({ onNotify }) => {
-  const [branding, setBranding] = useState<AppBrandingConfig>(() => getStoredBranding());
+export const SchoolBrandingCustomizer: React.FC<SchoolBrandingCustomizerProps> = ({ onNotify, schoolId }) => {
+  const targetSchoolId = (schoolId || 'eminent-academy').toLowerCase();
+  const [branding, setBranding] = useState<AppBrandingConfig>(() => getStoredBranding(targetSchoolId));
   const [activePreviewTab, setActivePreviewTab] = useState<'header' | 'receipt' | 'login'>('header');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+  const [isCloudLive, setIsCloudLive] = useState(false);
+  const [lastCloudSync, setLastCloudSync] = useState<Date | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const profileImportInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync state when mounted
+  // Sync state and connect live Firestore listener
   useEffect(() => {
-    setBranding(getStoredBranding());
-  }, []);
+    let isMounted = true;
+    setBranding(getStoredBranding(targetSchoolId));
+
+    // 1. Subscribe to live branding from Firestore
+    const unsubscribe = subscribeBrandingFromFirestore(targetSchoolId, (cloudBranding) => {
+      if (!isMounted) return;
+      applyCloudBranding(cloudBranding, targetSchoolId);
+      setBranding(cloudBranding);
+      setIsCloudLive(true);
+      setLastCloudSync(new Date());
+    });
+
+    // 2. Fetch latest config from Firestore on mount
+    syncBrandingFromCloud(targetSchoolId).then((cloudBranding) => {
+      if (!isMounted) return;
+      if (cloudBranding) {
+        setBranding(cloudBranding);
+      }
+      setIsCloudLive(true);
+      setLastCloudSync(new Date());
+    });
+
+    return () => {
+      isMounted = false;
+      if (unsubscribe) unsubscribe();
+    };
+  }, [targetSchoolId]);
 
   const handleFieldChange = <K extends keyof AppBrandingConfig>(field: K, value: AppBrandingConfig[K]) => {
     setBranding((prev) => ({
@@ -89,26 +124,57 @@ export const SchoolBrandingCustomizer: React.FC<SchoolBrandingCustomizerProps> =
     setSaveSuccess(false);
   };
 
-  const handleSave = () => {
-    const saved = saveStoredBranding(branding);
-    setBranding(saved);
-    setSaveSuccess(true);
-    if (onNotify) {
-      onNotify(`School identity & branding saved! App title set to "${saved.appName}".`);
+  const handleSave = async () => {
+    setIsCloudSyncing(true);
+    try {
+      const saved = saveStoredBranding(branding, targetSchoolId, true);
+      setBranding(saved);
+      setSaveSuccess(true);
+      setIsCloudLive(true);
+      setLastCloudSync(new Date());
+      if (onNotify) {
+        onNotify(`School identity & branding saved and synchronized to Cloud Firestore! App title set to "${saved.appName}".`);
+      }
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (err) {
+      console.warn('[Branding Save Error]:', err);
+    } finally {
+      setIsCloudSyncing(false);
     }
-    setTimeout(() => setSaveSuccess(false), 3000);
   };
 
   const handleReset = () => {
-    if (window.confirm('Reset all custom school branding back to Eminent Royal Crown Academy defaults?')) {
-      const def = resetStoredBranding();
+    if (window.confirm('Reset all custom school branding back to Eminent Royal Crown Academy defaults? This will also sync defaults to Cloud Firestore.')) {
+      const def = resetStoredBranding(targetSchoolId);
       setBranding(def);
       setSaveSuccess(true);
       if (onNotify) {
-        onNotify('Branding reset to factory default.');
+        onNotify('Branding reset to factory default and synced with Cloud Firestore.');
       }
     }
   };
+
+  const handleCloudPull = async () => {
+    setIsCloudSyncing(true);
+    try {
+      const cloudBranding = await syncBrandingFromCloud(targetSchoolId);
+      if (cloudBranding) {
+        setBranding(cloudBranding);
+        if (onNotify) {
+          onNotify(`Fetched latest school branding from Cloud Firestore! (${cloudBranding.appName})`);
+        }
+      } else {
+        if (onNotify) {
+          onNotify('Local branding is already synchronized with Cloud Firestore.');
+        }
+      }
+      setIsCloudLive(true);
+      setLastCloudSync(new Date());
+    } finally {
+      setIsCloudSyncing(false);
+    }
+  };
+
 
   // Image Upload Handler
   const handleLogoFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -179,25 +245,41 @@ export const SchoolBrandingCustomizer: React.FC<SchoolBrandingCustomizerProps> =
               <Palette className="w-6 h-6 text-amber-300" />
             </div>
             <div>
-              <h3 className="text-lg sm:text-xl font-black tracking-tight text-white flex items-center gap-2">
-                School Branding & White-Label Customizer
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30 uppercase tracking-widest">
-                  Customizable
-                </span>
-              </h3>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-lg sm:text-xl font-black tracking-tight text-white flex items-center gap-2">
+                  School Branding & White-Label Customizer
+                </h3>
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[10px] font-bold">
+                  <span className={`w-2 h-2 rounded-full ${isCloudLive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-400'}`} />
+                  <Cloud className="w-3 h-3" />
+                  <span>{isCloudSyncing ? 'Syncing to Firestore...' : isCloudLive ? 'Firestore Live Sync' : 'Connecting Cloud...'}</span>
+                </div>
+              </div>
               <p className="text-xs sm:text-sm text-slate-300 mt-0.5">
-                Customize this bursary system for any school with their unique name, logo, emblem, theme color, and contact details.
+                Customize this bursary system with your school's unique name, logo, emblem, theme color, and receipt footer policies. Changes are synced across all bursar devices in real time via Cloud Firestore.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 self-stretch sm:self-auto">
+          <div className="flex items-center gap-2 self-stretch sm:self-auto flex-wrap">
             <button
+              type="button"
+              onClick={handleCloudPull}
+              disabled={isCloudSyncing}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs border border-white/10 transition-all cursor-pointer disabled:opacity-50"
+              title="Pull latest branding from Cloud Firestore"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isCloudSyncing ? 'animate-spin text-amber-300' : ''}`} />
+              <span>{isCloudSyncing ? 'Syncing...' : 'Sync Cloud'}</span>
+            </button>
+            <button
+              type="button"
               onClick={handleSave}
-              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-sm active:scale-95 transition-all cursor-pointer"
+              disabled={isCloudSyncing}
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-sm active:scale-95 transition-all cursor-pointer disabled:opacity-50"
             >
               {saveSuccess ? <CheckCircle2 className="w-4 h-4" /> : <Check className="w-4 h-4" />}
-              <span>{saveSuccess ? 'Saved & Applied!' : 'Save Branding'}</span>
+              <span>{saveSuccess ? 'Saved & Synced!' : isCloudSyncing ? 'Saving...' : 'Save & Sync Cloud'}</span>
             </button>
           </div>
         </div>

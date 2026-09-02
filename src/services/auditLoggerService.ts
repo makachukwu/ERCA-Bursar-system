@@ -4,32 +4,10 @@
  */
 
 import { safeStorage } from './safeStorage';
+import { saveAuditLogToFirestore } from './firebase';
+import type { AuditActionCategory, AuditActionSeverity, AuditLogEntry } from '../types';
 
-export type AuditActionCategory = 
-  | 'PAYMENT' 
-  | 'STUDENT' 
-  | 'PAYROLL' 
-  | 'EXPENSE' 
-  | 'REMITTANCE' 
-  | 'ROLLOVER' 
-  | 'SNAPSHOT' 
-  | 'SETTINGS' 
-  | 'SYSTEM';
-
-export type AuditActionSeverity = 'INFO' | 'SUCCESS' | 'WARNING' | 'CRITICAL';
-
-export interface AuditLogEntry {
-  id: string;
-  timestamp: string; // ISO string
-  readableTime: string; // Formatted date time string
-  category: AuditActionCategory;
-  action: string; // Short verb e.g. "RECORD_PAYMENT", "DELETE_REMITTANCE", "UPSERT_STAFF"
-  description: string; // Human readable description
-  details?: Record<string, any>;
-  performer: string; // Bursar name or system
-  schoolId?: string;
-  severity: AuditActionSeverity;
-}
+export type { AuditActionCategory, AuditActionSeverity, AuditLogEntry };
 
 const STORAGE_AUDIT_LOGS_KEY = 'eminent_system_audit_logs_v1';
 const MAX_LOG_ENTRIES = 2000;
@@ -69,10 +47,51 @@ export function recordAuditLog(
     const updated = [entry, ...existing].slice(0, MAX_LOG_ENTRIES);
     safeStorage.setItem(STORAGE_AUDIT_LOGS_KEY, JSON.stringify(updated));
   } catch (e) {
-    console.warn('Failed to persist audit log:', e);
+    console.warn('Failed to persist audit log locally:', e);
+  }
+
+  // Asynchronously synchronize with Firestore for cross-device visibility
+  try {
+    const targetSchool = (schoolId || 'eminent-academy').toLowerCase();
+    saveAuditLogToFirestore(entry, targetSchool).catch((err) => {
+      console.warn('[Audit Logger] Firestore background sync notice:', err);
+    });
+  } catch (syncErr) {
+    console.warn('[Audit Logger] Firestore dispatch notice:', syncErr);
   }
 
   return entry;
+}
+
+/**
+ * Saves a list of audit logs to safe local cache
+ */
+export function saveStoredAuditLogs(logs: AuditLogEntry[]): void {
+  try {
+    const capped = logs.slice(0, MAX_LOG_ENTRIES);
+    safeStorage.setItem(STORAGE_AUDIT_LOGS_KEY, JSON.stringify(capped));
+  } catch (e) {
+    console.warn('Failed to persist audit logs cache:', e);
+  }
+}
+
+/**
+ * Merges local and cloud audit logs without duplicates, sorted descending by timestamp
+ */
+export function mergeAuditLogs(localLogs: AuditLogEntry[], cloudLogs: AuditLogEntry[]): AuditLogEntry[] {
+  const map = new Map<string, AuditLogEntry>();
+  // Process local logs first
+  (localLogs || []).forEach((l) => {
+    if (l && l.id) map.set(l.id, l);
+  });
+  // Overlay cloud logs
+  (cloudLogs || []).forEach((c) => {
+    if (c && c.id) map.set(c.id, c);
+  });
+  const merged = Array.from(map.values());
+  return merged
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .slice(0, MAX_LOG_ENTRIES);
 }
 
 /**

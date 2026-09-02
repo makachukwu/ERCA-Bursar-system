@@ -32,7 +32,6 @@ import {
   isLegacyMockStudent,
   clearSchoolTombstones
 } from './services/storage';
-import { saveRemittances } from './services/remittanceService';
 import { clearStoredIgnoredDuplicates } from './services/duplicateService';
 import {
   saveStoredStaff,
@@ -106,7 +105,18 @@ import {
   recordFirebaseSyncSuccess,
   wipeSchoolDataForCleanSlate,
   SyncStatus,
+  subscribeRemittancesFromFirestore,
+  getRemittancesFromFirestore,
+  saveRemittanceToFirestore,
+  subscribeBrandingFromFirestore,
 } from './services/firebase';
+import { applyCloudBranding } from './services/brandingService';
+import { 
+  getSavedRemittances, 
+  saveRemittances, 
+  mergeRemittanceRecords 
+} from './services/remittanceService';
+import { RemittanceRecord } from './types';
 
 const STORAGE_SESSION_KEY = 'bursar_session_profile';
 
@@ -181,6 +191,7 @@ export default function App() {
   // Data & Network States
   const [students, setStudents] = useState<StudentPaymentRecord[]>(() => getStoredStudents(activeSchoolId));
   const [scholarships, setScholarships] = useState<ScholarshipRecord[]>(() => getStoredScholarships(activeSchoolId));
+  const [remittances, setRemittances] = useState<RemittanceRecord[]>(() => getSavedRemittances(activeSchoolId));
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => getSyncStatus());
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -192,6 +203,9 @@ export default function App() {
   useEffect(() => {
     const currentSchoolId = activeSchool?.id || 'eminent-academy';
     let isCancelled = false;
+
+    // Load local remittances immediately for current school
+    setRemittances(getSavedRemittances(currentSchoolId));
 
     // Test Firestore connection on boot
     testConnection().then((res) => {
@@ -239,6 +253,26 @@ export default function App() {
       })
       .catch(() => {});
 
+    getRemittancesFromFirestore(currentSchoolId)
+      .then(async (cloudRemittances) => {
+        if (isCancelled) return;
+        const local = getSavedRemittances(currentSchoolId);
+        // Upload any local remittances that are not in Firestore yet
+        const cloudIds = new Set(cloudRemittances.map((r) => r.id));
+        const unsynced = local.filter((r) => r.id && !cloudIds.has(r.id));
+        for (const item of unsynced) {
+          await saveRemittanceToFirestore(item, currentSchoolId).catch((err) => {
+            console.warn('[Remittance Sync] Background upload note:', err);
+          });
+        }
+        const merged = mergeRemittanceRecords(local, cloudRemittances);
+        setRemittances(merged);
+        saveRemittances(merged, currentSchoolId);
+      })
+      .catch((err) => {
+        console.warn('[Firestore] App remittance fetch note:', err);
+      });
+
     // 2. Real-time Firestore subscription for instant multi-device / multi-tab synchronization
     const unsubscribeStudents = subscribeStudentsFromFirestore(currentSchoolId, (liveStudents) => {
       if (!isCancelled && liveStudents && liveStudents.length > 0) {
@@ -250,6 +284,16 @@ export default function App() {
     const unsubscribeScholarships = subscribeScholarshipsFromFirestore(currentSchoolId, (liveSch) => {
       if (!isCancelled && liveSch && liveSch.length > 0) {
         setScholarships(liveSch);
+      }
+    });
+
+    const unsubscribeRemittances = subscribeRemittancesFromFirestore(currentSchoolId, (liveRemittances) => {
+      if (!isCancelled) {
+        setRemittances((prevLocal) => {
+          const merged = mergeRemittanceRecords(prevLocal, liveRemittances);
+          saveRemittances(merged, currentSchoolId);
+          return merged;
+        });
       }
     });
 
@@ -271,17 +315,29 @@ export default function App() {
       }
     });
 
+    const unsubscribeBranding = subscribeBrandingFromFirestore(currentSchoolId, (liveBranding) => {
+      if (!isCancelled && liveBranding && liveBranding.appName) {
+        applyCloudBranding(liveBranding, currentSchoolId);
+      }
+    });
+
     return () => {
       isCancelled = true;
       if (unsubAuth) unsubAuth();
       if (unsubStatus) unsubStatus();
       if (unsubscribeStudents) unsubscribeStudents();
       if (unsubscribeScholarships) unsubscribeScholarships();
+      if (unsubscribeRemittances) unsubscribeRemittances();
       if (unsubscribeExpenses) unsubscribeExpenses();
       if (unsubscribeStaff) unsubscribeStaff();
       if (unsubscribePayroll) unsubscribePayroll();
+      if (unsubscribeBranding) unsubscribeBranding();
     };
   }, [activeSchool?.id]);
+
+  const pendingRemittanceCount = useMemo(() => {
+    return remittances.filter((r) => r.status === 'pending' || r.approvalStatus === 'pending').length;
+  }, [remittances]);
 
   // Modals & Interactive States
   const [selectedStudentForDetails, setSelectedStudentForDetails] = useState<StudentPaymentRecord | null>(null);
@@ -1342,6 +1398,7 @@ export default function App() {
             }
           }}
           studentCount={students.length}
+          pendingRemittanceCount={pendingRemittanceCount}
         />
 
         {/* Student Full Details Modal with Confirmation */}

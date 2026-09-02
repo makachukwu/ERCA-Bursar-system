@@ -3288,14 +3288,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* 11. Activity & Immutable Audit Logs Sub-App */}
           {activeAppId === 'audit_logs' && (
             <div className="space-y-4">
-              <AuditLogsView session={session} />
+              <AuditLogsView session={session} schoolId={activeSchool?.id} />
             </div>
           )}
 
           {/* 12. School Branding & White-Label Customizer Sub-App */}
           {activeAppId === 'school_branding' && (
             <div className="space-y-4">
-              <SchoolBrandingCustomizer />
+              <SchoolBrandingCustomizer schoolId={activeSchool?.id} />
             </div>
           )}
         </div>

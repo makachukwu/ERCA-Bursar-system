@@ -415,4 +415,59 @@ export interface AcademicTermSchedule {
   updatedAt?: string;
 }
 
+// -------------------------------------------------------------
+// School Identity & Branding Types
+// -------------------------------------------------------------
+
+export interface AppBrandingConfig {
+  appName: string;
+  shortName: string;
+  tagline: string;
+  logoType: 'default_crest' | 'custom_upload' | 'url' | 'preset_emblem';
+  customLogoData?: string;
+  presetEmblem: 'crown' | 'shield' | 'mortarboard' | 'book' | 'torch' | 'crest' | 'star' | 'building' | 'globe' | 'feather' | 'laurel' | 'compass';
+  emblemColor: string;
+  primaryColor: string;
+  schoolAddress: string;
+  schoolPhone: string;
+  schoolEmail: string;
+  taxOrRegNo: string;
+  bursarTitle: string;
+  currencySymbol: string;
+  receiptFooterText: string;
+  enableWatermark: boolean;
+  schoolId?: string;
+  updatedAt?: string;
+}
+
+// -------------------------------------------------------------
+// System Audit Log Types
+// -------------------------------------------------------------
+
+export type AuditActionCategory = 
+  | 'PAYMENT' 
+  | 'STUDENT' 
+  | 'PAYROLL' 
+  | 'EXPENSE' 
+  | 'REMITTANCE' 
+  | 'ROLLOVER' 
+  | 'SNAPSHOT' 
+  | 'SETTINGS' 
+  | 'SYSTEM';
+
+export type AuditActionSeverity = 'INFO' | 'SUCCESS' | 'WARNING' | 'CRITICAL';
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string; // ISO string
+  readableTime: string; // Formatted date time string
+  category: AuditActionCategory;
+  action: string; // Short verb e.g. "RECORD_PAYMENT", "DELETE_REMITTANCE", "UPSERT_STAFF"
+  description: string; // Human readable description
+  details?: Record<string, any>;
+  performer: string; // Bursar name or system
+  schoolId?: string;
+  severity: AuditActionSeverity;
+}
+
 
