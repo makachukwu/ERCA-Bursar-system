@@ -1811,3 +1811,161 @@ export const loadPayrollFromFirestore = getPayrollFromFirestore;
 export const savePayrollRecordToFirestore = savePayrollToFirestore;
 export const subscribeToExpenses = subscribeExpensesFromFirestore;
 export const loadStudentsFromFirestore = getStudentsFromFirestore;
+
+/**
+ * ============================================================================
+ * CLEAN SLATE CLOUD WIPING REPOSITORIES
+ * ============================================================================
+ */
+
+/**
+ * Wipes all students for a specific school from Firestore
+ */
+export async function wipeSchoolStudentsFromFirestore(schoolId: string = 'eminent-academy'): Promise<boolean> {
+  const firestore = getFirebaseDb();
+  if (!firestore) return false;
+  const targetSchool = schoolId.toLowerCase();
+  const targetPath = `schools/${targetSchool}/students`;
+  try {
+    const colRef = collection(firestore, 'schools', targetSchool, 'students');
+    const snapshot = await getDocs(colRef);
+    if (snapshot.empty) return true;
+
+    const CHUNK_SIZE = 450;
+    const docs = snapshot.docs;
+    for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+      const chunk = docs.slice(i, i + CHUNK_SIZE);
+      const batch = writeBatch(firestore);
+      chunk.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+    recordFirebaseSyncSuccess();
+    return true;
+  } catch (err) {
+    console.warn('[Firestore] Error wiping students from cloud:', err);
+    try {
+      handleFirestoreError(err, OperationType.DELETE, targetPath);
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * Wipes all remittances for a specific school from Firestore
+ */
+export async function wipeSchoolRemittancesFromFirestore(schoolId: string = 'eminent-academy'): Promise<boolean> {
+  const firestore = getFirebaseDb();
+  if (!firestore) return false;
+  const targetSchool = schoolId.toLowerCase();
+  const targetPath = `schools/${targetSchool}/remittances`;
+  try {
+    const colRef = collection(firestore, 'schools', targetSchool, 'remittances');
+    const snapshot = await getDocs(colRef);
+    if (snapshot.empty) return true;
+
+    const CHUNK_SIZE = 450;
+    const docs = snapshot.docs;
+    for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+      const chunk = docs.slice(i, i + CHUNK_SIZE);
+      const batch = writeBatch(firestore);
+      chunk.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+    recordFirebaseSyncSuccess();
+    return true;
+  } catch (err) {
+    console.warn('[Firestore] Error wiping remittances from cloud:', err);
+    try {
+      handleFirestoreError(err, OperationType.DELETE, targetPath);
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * Wipes all scholarships for a specific school from Firestore
+ */
+export async function wipeSchoolScholarshipsFromFirestore(schoolId: string = 'eminent-academy'): Promise<boolean> {
+  const firestore = getFirebaseDb();
+  if (!firestore) return false;
+  const targetSchool = schoolId.toLowerCase();
+  const targetPath = `schools/${targetSchool}/scholarships`;
+  try {
+    const colRef = collection(firestore, 'schools', targetSchool, 'scholarships');
+    const snapshot = await getDocs(colRef);
+    if (snapshot.empty) return true;
+
+    const CHUNK_SIZE = 450;
+    const docs = snapshot.docs;
+    for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+      const chunk = docs.slice(i, i + CHUNK_SIZE);
+      const batch = writeBatch(firestore);
+      chunk.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+    recordFirebaseSyncSuccess();
+    return true;
+  } catch (err) {
+    console.warn('[Firestore] Error wiping scholarships from cloud:', err);
+    try {
+      handleFirestoreError(err, OperationType.DELETE, targetPath);
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * Wipes all expenses for a specific school from Firestore
+ */
+export async function wipeSchoolExpensesFromFirestore(schoolId: string = 'eminent-academy'): Promise<boolean> {
+  const firestore = getFirebaseDb();
+  if (!firestore) return false;
+  const targetSchool = schoolId.toLowerCase();
+  const targetPath = `schools/${targetSchool}/expenses`;
+  try {
+    const colRef = collection(firestore, 'schools', targetSchool, 'expenses');
+    const snapshot = await getDocs(colRef);
+    if (snapshot.empty) return true;
+
+    const CHUNK_SIZE = 450;
+    const docs = snapshot.docs;
+    for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+      const chunk = docs.slice(i, i + CHUNK_SIZE);
+      const batch = writeBatch(firestore);
+      chunk.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+    recordFirebaseSyncSuccess();
+    return true;
+  } catch (err) {
+    console.warn('[Firestore] Error wiping expenses from cloud:', err);
+    try {
+      handleFirestoreError(err, OperationType.DELETE, targetPath);
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * Master clean slate cloud wipe function:
+ * Wipes active students, remittances, scholarships, and expenses from Firestore,
+ * while keeping historical snapshots in backups intact.
+ */
+export async function wipeSchoolDataForCleanSlate(schoolId: string = 'eminent-academy'): Promise<boolean> {
+  try {
+    await Promise.allSettled([
+      wipeSchoolStudentsFromFirestore(schoolId),
+      wipeSchoolRemittancesFromFirestore(schoolId),
+      wipeSchoolScholarshipsFromFirestore(schoolId),
+      wipeSchoolExpensesFromFirestore(schoolId),
+    ]);
+    return true;
+  } catch (e) {
+    console.warn('[Firestore] Error in wipeSchoolDataForCleanSlate:', e);
+    return false;
+  }
+}

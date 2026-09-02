@@ -320,6 +320,21 @@ export function unmarkScholarshipDeleted(id: string, schoolId?: string): void {
   }
 }
 
+/**
+ * Clears all deletion tombstones for a school (used when doing a fresh clean slate wipe)
+ */
+export function clearSchoolTombstones(schoolId?: string): void {
+  const targetSchoolId = (schoolId && schoolId.trim()) ? schoolId.trim().toLowerCase() : 'eminent-academy';
+  try {
+    safeStorage.removeItem(getStorageKey(DELETED_STUDENTS_STORAGE_PREFIX, targetSchoolId));
+    safeStorage.removeItem(getStorageKey(DELETED_SCHOLARSHIPS_STORAGE_PREFIX, targetSchoolId));
+    safeStorage.removeItem(getStorageKey(DELETED_EXPENSES_STORAGE_PREFIX, targetSchoolId));
+    safeStorage.removeItem(getStorageKey(DELETED_STAFF_STORAGE_PREFIX, targetSchoolId));
+  } catch (e) {
+    console.warn('Error clearing school tombstones:', e);
+  }
+}
+
 // Expense tombstones
 export function markExpenseDeleted(id: string, schoolId?: string): void {
   if (!id) return;

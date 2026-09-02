@@ -309,6 +309,240 @@ export function downloadCsvBackup(
 }
 
 /**
+ * Generates an exhaustive CSV containing all students, remittances, expenses, and scholarships
+ */
+export function generateAllCurrentDataCsv(
+  data: {
+    students?: StudentPaymentRecord[];
+    remittances?: RemittanceRecord[];
+    expenses?: ExpenseItem[];
+    scholarships?: ScholarshipRecord[];
+    school?: SchoolProfile | null;
+  },
+  session?: BursarSession,
+  meta?: { term?: string; academicSession?: string; school?: SchoolProfile }
+): string {
+  const escapeCsv = (val: any) => {
+    if (val === null || val === undefined) return '""';
+    const str = String(val).replace(/"/g, '""');
+    return `"${str}"`;
+  };
+
+  const lines: string[] = [];
+
+  // --- SECTION 1: STUDENT PAYMENT & FEE RECORDS ---
+  const studentHeaders = [
+    'Student ID',
+    'Full Name',
+    'Class',
+    'Term',
+    'Session',
+    'Total Fee Amount',
+    'Total Amount Paid',
+    'Remaining Balance',
+    'Overall Payment Status',
+    'Last Payment Date',
+    'Tuition Fee',
+    'Tuition Paid',
+    'Admission Fee',
+    'Admission Paid',
+    'Exam Fee',
+    'Exam Paid',
+    'Lesson Fee',
+    'Lesson Paid',
+    'Lesson Months',
+    'Receipt No',
+    'Total Remitted',
+    'Exempt School Fee',
+    'Scholarship Notes',
+  ];
+  lines.push(studentHeaders.join(','));
+
+  const students = data.students || [];
+  if (students.length > 0) {
+    students.forEach((s) => {
+      const live = computeStudentLiveFees(s, meta?.school || data.school || undefined);
+      const breakdown = live.breakdown;
+      lines.push([
+        escapeCsv(s.id),
+        escapeCsv(s.full_name),
+        escapeCsv(s.class),
+        escapeCsv(s.term),
+        escapeCsv(s.session),
+        live.totalFee,
+        live.amountPaid,
+        live.balance,
+        escapeCsv(live.status),
+        escapeCsv(s.payment_date || 'N/A'),
+        breakdown.tuitionFee,
+        breakdown.tuitionPaid,
+        breakdown.admissionFee,
+        breakdown.admissionPaid,
+        breakdown.examFee,
+        breakdown.examPaid,
+        breakdown.lessonFee,
+        breakdown.lessonPaid,
+        escapeCsv(breakdown.lessonMonths || 'None'),
+        escapeCsv(s.receipt_no || 'N/A'),
+        s.total_remitted ?? 0,
+        escapeCsv(s.is_exempt_from_school_fee ? 'Yes' : 'No'),
+        escapeCsv(s.scholarship_notes || ''),
+      ].join(','));
+    });
+  } else {
+    lines.push('""');
+  }
+
+  // --- SECTION 2: REMITTANCES & BANK DEPOSITS ---
+  const remittances = data.remittances || [];
+  if (remittances.length > 0) {
+    lines.push('');
+    lines.push('# --- REMITTANCES & BANK HANDOVERS ---');
+    const remittanceHeaders = [
+      'Remittance ID',
+      'Reference Number',
+      'Date',
+      'Amount',
+      'Remitted To',
+      'Payment Method',
+      'Status',
+      'Bursar Name',
+      'Approved By',
+      'Approved At',
+      'Notes',
+    ];
+    lines.push(remittanceHeaders.join(','));
+    remittances.forEach((r) => {
+      lines.push([
+        escapeCsv(r.id),
+        escapeCsv(r.referenceNumber),
+        escapeCsv(r.date),
+        r.amount,
+        escapeCsv(r.remittedTo),
+        escapeCsv(r.paymentMethod || 'bank_deposit'),
+        escapeCsv(r.status || r.approvalStatus || 'approved'),
+        escapeCsv(r.bursarName || ''),
+        escapeCsv(r.approvedBy || ''),
+        escapeCsv(r.approvedAt || ''),
+        escapeCsv(r.notes || ''),
+      ].join(','));
+    });
+  }
+
+  // --- SECTION 3: OPERATIONAL EXPENSES ---
+  const expenses = data.expenses || [];
+  if (expenses.length > 0) {
+    lines.push('');
+    lines.push('# --- OPERATIONAL EXPENSES ---');
+    const expenseHeaders = [
+      'Expense ID',
+      'Date',
+      'Category',
+      'Description',
+      'Amount',
+      'Recipient',
+      'Payment Method',
+      'Term',
+      'Session',
+    ];
+    lines.push(expenseHeaders.join(','));
+    expenses.forEach((e) => {
+      lines.push([
+        escapeCsv(e.id),
+        escapeCsv(e.date),
+        escapeCsv(e.category),
+        escapeCsv(e.description),
+        e.amount,
+        escapeCsv(e.recipient || ''),
+        escapeCsv(e.paymentMethod || ''),
+        escapeCsv(e.term || ''),
+        escapeCsv(e.session || ''),
+      ].join(','));
+    });
+  }
+
+  // --- SECTION 4: SCHOLARSHIPS & WAIVERS ---
+  const scholarships = data.scholarships || [];
+  if (scholarships.length > 0) {
+    lines.push('');
+    lines.push('# --- SCHOLARSHIPS & EXEMPTIONS ---');
+    const scholarshipHeaders = [
+      'Scholarship ID',
+      'Student Name',
+      'Class',
+      'Exemption Type',
+      'Discount %',
+      'Notes',
+    ];
+    lines.push(scholarshipHeaders.join(','));
+    scholarships.forEach((sc) => {
+      lines.push([
+        escapeCsv(sc.id),
+        escapeCsv(sc.student_name),
+        escapeCsv(sc.class),
+        escapeCsv(sc.scholarship_type || 'Full Exemption'),
+        sc.scholarship_percentage ?? 100,
+        escapeCsv(sc.scholarship_notes || ''),
+      ].join(','));
+    });
+  }
+
+  // --- SECTION 5: AUDIT TOTALS & SNAPSHOT METRICS ---
+  lines.push('');
+  lines.push('# --- AUDIT OVERVIEW PRIOR TO CLEAN SLATE WIPE ---');
+  lines.push('Metric,Value');
+  const analytics = calculateOverallAnalytics(students);
+  lines.push(`School Name,${escapeCsv(session?.schoolName || 'Eminent Royal Crown Academy')}`);
+  lines.push(`Export Timestamp,${escapeCsv(new Date().toISOString())}`);
+  lines.push(`Total Students Exported,${students.length}`);
+  lines.push(`Total School Fees Billed,${analytics.totalFees}`);
+  lines.push(`Total Fees Paid,${analytics.totalPaid}`);
+  lines.push(`Total Outstanding Arrears,${analytics.totalBalance}`);
+  lines.push(`Total Remittances Count,${remittances.length}`);
+  lines.push(`Total Expenses Count,${expenses.length}`);
+  lines.push(`Total Scholarships Count,${scholarships.length}`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Automatically triggers download of all current school data as a comprehensive CSV backup
+ */
+export function downloadAllCurrentDataCsvBackup(
+  data: {
+    students?: StudentPaymentRecord[];
+    remittances?: RemittanceRecord[];
+    expenses?: ExpenseItem[];
+    scholarships?: ScholarshipRecord[];
+    school?: SchoolProfile | null;
+  },
+  session: BursarSession,
+  meta?: { term?: string; academicSession?: string; school?: SchoolProfile }
+): void {
+  const csvContent = generateAllCurrentDataCsv(data, session, meta);
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+
+  const schoolSlug = (session.schoolName || 'eminent_academy')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  const termSlug = (meta?.term || (data.students && data.students[0]?.term) || 'current_term')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_');
+  const dateStamp = getTodayDateString();
+
+  link.setAttribute('download', `${schoolSlug}_ALL_DATA_CLEAN_SLATE_BACKUP_${termSlug}_${dateStamp}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/**
  * Converts data to JSON string and triggers browser download
  */
 export function downloadJsonBackup(

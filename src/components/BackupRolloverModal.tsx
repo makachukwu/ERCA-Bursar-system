@@ -28,6 +28,7 @@ import {
 import { 
   downloadCsvBackup, 
   downloadJsonBackup, 
+  downloadAllCurrentDataCsvBackup,
   saveLocalSnapshot, 
   getStoredSnapshots, 
   deleteStoredSnapshot, 
@@ -39,6 +40,9 @@ import {
   getTermBackupsFromFirestore, 
   deleteTermBackupFromFirestore 
 } from '../services/firebase';
+import { getSavedRemittances } from '../services/remittanceService';
+import { getStoredScholarships } from '../services/storage';
+import { getStoredExpenses } from '../services/expenseService';
 import { formatCurrency, formatDate, promoteSchoolClass, STANDARD_CLASSES } from '../services/calculations';
 
 interface BackupRolloverModalProps {
@@ -47,6 +51,7 @@ interface BackupRolloverModalProps {
   students: StudentPaymentRecord[];
   session: BursarSession;
   onRolloverComplete: (newStudents: StudentPaymentRecord[], message: string) => void;
+  onCleanSlateComplete?: (message: string) => Promise<void> | void;
 }
 
 type ModalTab = 'rollover' | 'archives' | 'export';
@@ -57,6 +62,7 @@ export const BackupRolloverModal: React.FC<BackupRolloverModalProps> = ({
   students,
   session,
   onRolloverComplete,
+  onCleanSlateComplete,
 }) => {
   const [activeTab, setActiveTab] = useState<ModalTab>('rollover');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -151,10 +157,43 @@ export const BackupRolloverModal: React.FC<BackupRolloverModalProps> = ({
     setIsProcessing(true);
     try {
       if (actionType === 'clean_slate') {
+        // Step 1: Save full snapshot of existing records for permanent historical safekeeping
         const { snapshot } = await executeCleanSlateWipe(students, session);
         saveTermBackupToFirestore(snapshot, session.schoolId || 'eminent-academy').catch(() => {});
         setArchives(getStoredSnapshots(session.schoolId || 'eminent-academy'));
-        onRolloverComplete([], `Active roster cleared for clean slate. Previous term archived as "${snapshot.term}".`);
+
+        // Step 2: AUTOMATICALLY download all current data as CSV before wiping!
+        const currentRemittances = getSavedRemittances(session.schoolId || 'eminent-academy');
+        const currentScholarships = getStoredScholarships(session.schoolId || 'eminent-academy');
+        const currentExpenses = getStoredExpenses(session.schoolId || 'eminent-academy');
+
+        downloadAllCurrentDataCsvBackup(
+          {
+            students,
+            remittances: currentRemittances,
+            scholarships: currentScholarships,
+            expenses: currentExpenses,
+          },
+          session,
+          { term: currentTerm, academicSession: currentSession }
+        );
+
+        // Pause briefly to ensure the browser has initiated the file download before wiping storage
+        await new Promise((resolve) => setTimeout(resolve, 350));
+
+        // Step 3: Wipe active roster and financial records to bring brand new app
+        if (onCleanSlateComplete) {
+          await onCleanSlateComplete(
+            `All current data downloaded as CSV! Active student roster and records wiped for a brand-new app.`
+          );
+        } else {
+          onRolloverComplete(
+            [],
+            `All current data downloaded as CSV! Active student roster and records wiped for a brand-new app.`
+          );
+        }
+        onClose();
+        return;
       } else {
         const config: RolloverConfig = {
           targetTerm,
@@ -397,9 +436,9 @@ export const BackupRolloverModal: React.FC<BackupRolloverModalProps> = ({
 
                   {/* Option C: 100% Blank Slate */}
                   <label
-                    className={`p-3 rounded-2xl border flex items-start gap-3 cursor-pointer transition-all ${
+                    className={`p-3.5 rounded-2xl border flex items-start gap-3 cursor-pointer transition-all ${
                       actionType === 'clean_slate'
-                        ? 'bg-rose-50/80 border-rose-400 ring-2 ring-rose-400/20'
+                        ? 'bg-rose-50/90 border-rose-400 ring-2 ring-rose-400/20'
                         : 'hover:bg-slate-50 border-slate-200'
                     }`}
                   >
@@ -416,15 +455,49 @@ export const BackupRolloverModal: React.FC<BackupRolloverModalProps> = ({
                           Total Clean Slate (Wipe Active Roster)
                         </span>
                         <span className="text-[10px] font-bold bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full whitespace-nowrap">
-                          Wipe
+                          Auto-Download CSV & Wipe
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
-                        Archives all current records and clears the active list to start enrolling from a blank slate.
+                        Automatically downloads all your current student records and financial data as a CSV file to your computer, saves a permanent historical archive, and wipes the app clean for a fresh start.
                       </p>
                     </div>
                   </label>
                 </div>
+
+                {/* Clean Slate Assurance & Auto-Download Notice */}
+                {actionType === 'clean_slate' && (
+                  <div className="bg-rose-50/90 border border-rose-200 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-start gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                        <Download className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-rose-900">
+                          Automatic CSV Backup Safeguard Enabled
+                        </h4>
+                        <p className="text-[11px] text-rose-800/90 mt-0.5 leading-relaxed">
+                          Before wiping, the system will <strong>automatically trigger a complete CSV download</strong> of your entire school database (all student payment records, fee breakdowns, and remittances) directly to your device.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-white/90 rounded-xl p-3 border border-rose-100 text-[11px] space-y-2 text-slate-700">
+                      <div className="flex items-center gap-2 font-medium">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span><strong>1. Automatic CSV Download:</strong> All records saved to your device immediately</span>
+                      </div>
+                      <div className="flex items-center gap-2 font-medium">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span><strong>2. Historical Snapshot:</strong> Archived under Archives tab for future review</span>
+                      </div>
+                      <div className="flex items-center gap-2 font-medium">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span><strong>3. Brand New App:</strong> Student roster, balances, and remittances reset to clean slate</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Term & Session Inputs for Rollover */}
                 {actionType !== 'clean_slate' && (
@@ -556,14 +629,22 @@ export const BackupRolloverModal: React.FC<BackupRolloverModalProps> = ({
                   onClick={handleExecuteRollover}
                   disabled={isProcessing}
                   id="execute-term-rollover-btn"
-                  className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-bold text-xs flex items-center justify-center gap-2 shadow-lg active:scale-98 transition-all disabled:opacity-50"
+                  className={`w-full py-3.5 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 shadow-lg active:scale-98 transition-all disabled:opacity-50 ${
+                    actionType === 'clean_slate'
+                      ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/20'
+                      : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-600/20'
+                  }`}
                 >
-                  <Sparkles className="w-4 h-4" />
+                  {actionType === 'clean_slate' ? (
+                    <Download className="w-4 h-4" />
+                  ) : (
+                    <Sparkles className="w-4 h-4" />
+                  )}
                   <span>
                     {isProcessing
-                      ? 'Processing Rollover...'
+                      ? (actionType === 'clean_slate' ? 'Downloading CSV & Wiping...' : 'Processing Rollover...')
                       : actionType === 'clean_slate'
-                      ? 'Confirm Total Clean Slate'
+                      ? 'Download CSV & Wipe Clean Slate'
                       : `Save Backup & Start Clean Slate for ${targetTerm}`}
                   </span>
                 </button>

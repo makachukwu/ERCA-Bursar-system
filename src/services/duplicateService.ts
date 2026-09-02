@@ -91,6 +91,17 @@ export function saveStoredIgnoredDuplicateIds(ignoredIds: string[], schoolId: st
 }
 
 /**
+ * Clears persisted ignored duplicate IDs for a school
+ */
+export function clearStoredIgnoredDuplicates(schoolId: string = 'eminent-academy'): void {
+  try {
+    safeStorage.removeItem(`${STORAGE_IGNORED_DUPLICATES_PREFIX}${schoolId}`);
+  } catch (e) {
+    console.warn('Error clearing ignored duplicates:', e);
+  }
+}
+
+/**
  * Detects and groups duplicate student records with smart same-name recommendations
  */
 export function detectDuplicateGroups(

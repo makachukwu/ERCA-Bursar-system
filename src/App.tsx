@@ -29,8 +29,11 @@ import {
   markStudentDeleted,
   isStudentDeleted,
   unmarkStudentDeleted,
-  isLegacyMockStudent
+  isLegacyMockStudent,
+  clearSchoolTombstones
 } from './services/storage';
+import { saveRemittances } from './services/remittanceService';
+import { clearStoredIgnoredDuplicates } from './services/duplicateService';
 import {
   saveStoredStaff,
   saveStoredPayrollRecords
@@ -101,6 +104,7 @@ import {
   recordSheetsSyncSuccess,
   recordSheetsSyncError,
   recordFirebaseSyncSuccess,
+  wipeSchoolDataForCleanSlate,
   SyncStatus,
 } from './services/firebase';
 
@@ -1146,6 +1150,44 @@ export default function App() {
     setActiveTab('students');
   };
 
+  // Handle Clean Slate completion (wiping students & records for a brand-new app)
+  const handleCleanSlateComplete = async (message: string) => {
+    const currentSchoolId = activeSchool?.id || 'eminent-academy';
+    setStudents([]);
+    setScholarships([]);
+    setSelectedStudentForDetails(null);
+    setStudentForPayment(null);
+    setStudentToGrantScholarship(null);
+
+    // Reset local partitions
+    saveStoredStudents([], currentSchoolId);
+    saveStoredScholarships([], currentSchoolId);
+    saveRemittances([], currentSchoolId);
+    saveStoredExpenses([], currentSchoolId);
+    clearSchoolTombstones(currentSchoolId);
+    clearStoredIgnoredDuplicates(currentSchoolId);
+
+    // Reset Cloud Firestore
+    try {
+      await wipeSchoolDataForCleanSlate(currentSchoolId);
+    } catch (e) {
+      console.warn('Cloud clean slate wipe note:', e);
+    }
+
+    recordAuditLog(
+      'ROLLOVER',
+      'CLEAN_SLATE_WIPE',
+      `Full clean slate wipe executed for ${activeSchool?.name || currentSchoolId}. All active student and payment records wiped after auto-exporting CSV backup.`,
+      { schoolId: currentSchoolId },
+      session.bursarName,
+      currentSchoolId,
+      'WARNING'
+    );
+
+    showToast(message);
+    setActiveTab('students');
+  };
+
   // Handle End Term completion
   const handleEndTermComplete = (updatedStudents: StudentPaymentRecord[], message: string) => {
     const currentSchoolId = activeSchool?.id || 'eminent-academy';
@@ -1392,6 +1434,7 @@ export default function App() {
           students={students}
           session={session}
           onRolloverComplete={handleRolloverComplete}
+          onCleanSlateComplete={handleCleanSlateComplete}
         />
 
         {/* Student Upload via Google Sheet / Excel / CSV Modal */}
