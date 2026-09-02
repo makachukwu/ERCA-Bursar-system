@@ -975,7 +975,7 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
                 </div>
 
                 {/* Pending List */}
-                <div className="p-3 space-y-2.5 flex-1 overflow-y-auto max-h-[600px]">
+                <div className="p-3 space-y-2.5 flex-1">
                   {pendingRemittances.length === 0 ? (
                     <div className="py-12 px-4 text-center space-y-2">
                       <div className="w-10 h-10 rounded-2xl bg-amber-100/60 text-amber-800 flex items-center justify-center mx-auto">
@@ -1123,7 +1123,7 @@ export const CollectionView: React.FC<CollectionViewProps> = ({
                 </div>
 
                 {/* Approved List */}
-                <div className="p-3 space-y-2.5 flex-1 overflow-y-auto max-h-[600px]">
+                <div className="p-3 space-y-2.5 flex-1">
                   {approvedRemittances.length === 0 ? (
                     <div className="py-12 px-4 text-center space-y-2">
                       <div className="w-10 h-10 rounded-2xl bg-emerald-100/60 text-emerald-800 flex items-center justify-center mx-auto">
