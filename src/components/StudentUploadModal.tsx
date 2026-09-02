@@ -145,6 +145,18 @@ export const StudentUploadModal: React.FC<StudentUploadModalProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Filtered preview records
+  const filteredPreview = useMemo(() => {
+    if (!searchTerm.trim()) return parsedStudents;
+    const q = searchTerm.toLowerCase().trim();
+    return parsedStudents.filter(
+      (s) =>
+        s.full_name.toLowerCase().includes(q) ||
+        s.class.toLowerCase().includes(q) ||
+        s.id.toLowerCase().includes(q)
+    );
+  }, [parsedStudents, searchTerm]);
+
   if (!isOpen) return null;
 
   /**
@@ -490,7 +502,10 @@ export const StudentUploadModal: React.FC<StudentUploadModalProps> = ({
     try {
       let targetUrl = sheetUrl.trim();
 
-      if (targetUrl.includes('docs.google.com/spreadsheets/d/')) {
+      // Handle published Google Sheets web links: /d/e/2PACX.../pubhtml -> /pub?output=csv
+      if (targetUrl.includes('/pubhtml') || (targetUrl.includes('/pub') && !targetUrl.includes('output=csv'))) {
+        targetUrl = targetUrl.replace(/\/pubhtml.*/, '/pub?output=csv').replace(/\/pub(\?.*)?$/, '/pub?output=csv');
+      } else if (targetUrl.includes('docs.google.com/spreadsheets/d/')) {
         const match = targetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
         if (match && match[1]) {
           const sheetId = match[1];
@@ -502,7 +517,7 @@ export const StudentUploadModal: React.FC<StudentUploadModalProps> = ({
 
       const res = await fetch(targetUrl);
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: Could not fetch Google Sheet. Ensure sheet sharing is set to "Anyone with the link can view".`);
+        throw new Error(`HTTP ${res.status}: Could not fetch Google Sheet. Please check your sheet link permissions.`);
       }
 
       const text = await res.text();
@@ -521,7 +536,10 @@ export const StudentUploadModal: React.FC<StudentUploadModalProps> = ({
         },
       });
     } catch (err: any) {
-      setParseErrors([`Google Sheet link fetch error: ${err.message || String(err)}`]);
+      setParseErrors([
+        `Google Sheet link fetch notice: ${err.message || String(err)}.`,
+        'Tip: If your sheet has strict permissions or CORS restrictions, you can download your sheet as Excel (.xlsx) or CSV and upload via the "Upload CSV / Excel File" tab, or copy and paste the rows in "Paste Table Rows" for 100% instant import!'
+      ]);
       setIsParsing(false);
     }
   };
@@ -621,18 +639,6 @@ export const StudentUploadModal: React.FC<StudentUploadModalProps> = ({
     link.click();
     URL.revokeObjectURL(url);
   };
-
-  // Filtered preview records
-  const filteredPreview = useMemo(() => {
-    if (!searchTerm.trim()) return parsedStudents;
-    const q = searchTerm.toLowerCase().trim();
-    return parsedStudents.filter(
-      (s) =>
-        s.full_name.toLowerCase().includes(q) ||
-        s.class.toLowerCase().includes(q) ||
-        s.id.toLowerCase().includes(q)
-    );
-  }, [parsedStudents, searchTerm]);
 
   // Execute Upload to Firebase Firestore & Local Storage
   const handleCommitUploadToFirebase = async () => {
