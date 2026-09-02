@@ -228,37 +228,10 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             </button>
           </form>
 
-          {/* Quick Sign-in Credentials for Instant Access */}
-          <div className="pt-3 border-t border-slate-100 space-y-2">
-            <div className="flex items-center justify-between text-[11px] text-slate-500 font-medium">
-              <span>Quick Fill Access</span>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                id="quick-login-bursar-btn"
-                onClick={() => {
-                  setUsername('bursar');
-                  setPassword('bursar123');
-                }}
-                className="py-2 px-2.5 bg-slate-50 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 text-center transition-all cursor-pointer"
-              >
-                Bursar
-              </button>
-              <button
-                type="button"
-                id="quick-login-admin-btn"
-                onClick={() => {
-                  setUsername('admin');
-                  setPassword('admin123');
-                }}
-                className="py-2 px-2.5 bg-slate-50 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 text-center transition-all cursor-pointer"
-              >
-                Admin
-              </button>
-            </div>
-            <p className="text-[10px] text-slate-400 text-center">
-              Default passcodes: <span className="font-mono text-slate-600">bursar123</span> / <span className="font-mono text-slate-600">admin123</span>
+          {/* Minimal subtle footer note */}
+          <div className="pt-3 border-t border-slate-100 text-center">
+            <p className="text-[11px] text-slate-500">
+              Staff access only. Contact your administrator for credentials.
             </p>
           </div>
 
